@@ -51,7 +51,11 @@ The installed `card-compass` command also launches the app. Linux requires a des
 
 The desktop workspace opens to a dashboard, with dedicated screens for matches, wallet, spending, coverage, and preferences. Discovery excludes cards marked discontinued or with unknown availability; existing saved wallet cards remain available for coverage, settings, and statement history. Tile counts update after refresh. Categories overlap and use published reward units, earning categories, fee, variant, and relevant travel benefits. Generic travel insurance alone does not classify a card as a travel card. The issuer filter applies to search results; typing a search clears the selected reward group.
 
-Card details open in a separate window with Overview, Offers, Benefits, and Sources tabs. Click a card or press Enter to open its details; Escape closes the detail window. The interface supports a minimum window size of 1040 × 720, with scrollable dashboard, settings, and spending screens. Card illustrations and navigation icons are drawn as scalable vectors; illustrations are identifiers rather than official issuer artwork.
+Card details open in a separate window with Overview, Offers, Benefits, and Sources tabs. Click a card or press Enter to open its details; Escape closes the detail window. The interface supports a minimum window size of 1040 × 720, with scrollable dashboard, settings, and spending screens.
+
+Real card artwork appears in browsing results, wallet entries, recommendations, and card details. Images download asynchronously as cards become visible, with at most four concurrent requests. Valid PNG, JPEG, and WebP images are stored in `artwork/` alongside your profile and reused offline. Server ETag/Last-Modified checks avoid downloading unchanged images; changed image references use separate cache files. Catalog refresh allows displayed images to be checked again. Downloads have size/dimension limits and a timeout, and closing the app cancels outstanding image requests. Invalid or unavailable images fall back to the vector illustration. The Sources tab links the catalog's artwork reference; images may depict older card designs.
+
+[Preview the wallet with card artwork](docs/artwork-preview.png) (sample wallet).
 
 ![Card-category dashboard](docs/dashboard-preview.png)
 

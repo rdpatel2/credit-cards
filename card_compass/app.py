@@ -1213,6 +1213,16 @@ def main():
         if not window.cards or not window.matches:
             raise RuntimeError("Packaged catalog or recommendation engine unavailable")
         from .offers import VENTURE_ID
+        from .artwork import artwork_url
+        from PySide6.QtGui import QImage
+        image_path, _ = window.artwork.paths(artwork_url(window.by_id[VENTURE_ID]))
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        sample_image = QImage(120, 75, QImage.Format.Format_ARGB32)
+        sample_image.fill(QColor('#246842'))
+        if not sample_image.save(str(image_path), 'PNG'):
+            raise RuntimeError("Packaged image encoder unavailable")
+        if window.artwork.pixmap(window.by_id[VENTURE_ID]) is None:
+            raise RuntimeError("Packaged cached card artwork unavailable")
         window.show_card(window.by_id[VENTURE_ID])
         offer_text = window.offer_details.toPlainText()
         if '75,000 miles + $300 Capital One Travel Stays credit' not in offer_text or 'Limited-time offer' not in offer_text:
@@ -1245,6 +1255,7 @@ def main():
             raise RuntimeError('Packaged spending breakdown unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
         print('Dashboard smoke test: category tiles open active cards; dashboard is the startup page', flush=True)
+        print('Artwork smoke test: cached card image decoded for native display', flush=True)
         print('Offer smoke test: Venture miles, stays credit, and limited-time label displayed', flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)
