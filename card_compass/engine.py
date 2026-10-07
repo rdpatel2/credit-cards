@@ -209,6 +209,7 @@ def normalized_spend(profile):
 
 
 def available_offers(card, profile, today=None):
+    from .offers import reward_components
     today = today or date.today()
     result = []
     monthly = sum(float(v) for v in profile.get("spend", {}).values())
@@ -220,14 +221,23 @@ def available_offers(card, profile, today=None):
                     continue
             except ValueError:
                 continue
-        amount = float(offer.get("rewardAmount", 0))
-        unit = offer.get("rewardUnit")
-        value = amount if unit in ("cashback_usd", "statement_credit_usd") else amount * point_value(card, profile) / 100 if unit in ("points", "miles") else None
+        values = []
+        excluded = []
+        for component in reward_components(offer):
+            amount = float(component.get("rewardAmount", 0))
+            unit = component.get("rewardUnit")
+            if unit == "cashback_usd":
+                values.append(amount)
+            elif unit in ("points", "miles"):
+                values.append(amount * point_value(card, profile) / 100)
+            else:
+                excluded.append(component)
+        value = sum(values) if values else None
         days = offer.get("timeframeDays")
         required = offer.get("spendRequirement")
         feasible = days is not None and required is not None and monthly * float(days) / 30 >= float(required)
         public = offer.get("offerType") == "public"
-        result.append({**offer, "value": value, "feasible": feasible,
+        result.append({**offer, "value": value, "excludedComponents": excluded, "feasible": feasible,
                        "counted": bool(feasible and public and value is not None and profile.get("eligible_bonus", False))})
     return result
 

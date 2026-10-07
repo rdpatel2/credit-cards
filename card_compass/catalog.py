@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 from urllib.request import Request, urlopen
+from .offers import fetch_issuer_html, refresh_issuer_offers
 
 BASE = "https://raw.githubusercontent.com/fuermosi777/rewards/main/data"
 SOURCE = "https://github.com/fuermosi777/rewards"
@@ -74,6 +75,13 @@ def validate_catalog(value):
             if not isinstance(categories, list) or any(not isinstance(c, str) for c in categories):
                 raise ValueError("Invalid reward categories")
         for offer in card.get("offers", []):
+            components = offer.get("rewardComponents", [])
+            if not isinstance(components, list) or any(not isinstance(c, dict) for c in components):
+                raise ValueError("Invalid offer reward components")
+            for component in components:
+                amount = component.get("rewardAmount")
+                if not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0 or not isinstance(component.get("rewardUnit"), str):
+                    raise ValueError("Invalid offer reward component")
             for key in ("rewardAmount", "spendRequirement", "timeframeDays"):
                 number = offer.get(key)
                 if number is not None and (not isinstance(number, (int, float)) or not math.isfinite(number) or number < 0):
@@ -82,9 +90,10 @@ def validate_catalog(value):
 
 
 class CatalogStore:
-    def __init__(self, directory: Path | None = None, fetcher=fetch_json):
+    def __init__(self, directory: Path | None = None, fetcher=fetch_json, issuer_fetcher=fetch_issuer_html):
         self.directory = directory or data_dir()
         self.fetcher = fetcher
+        self.issuer_fetcher = issuer_fetcher
 
     def load(self):
         for path in (self.directory / "catalog.json", SNAPSHOT):
@@ -128,6 +137,8 @@ class CatalogStore:
                 for future in futures:
                     future.cancel()
                 raise
+        check_cancelled()
+        refresh_issuer_offers(cards, self.load()["cards"], self.issuer_fetcher)
         check_cancelled()
         result = validate_catalog({
             "cards": sorted(cards, key=lambda c: (c["issuerId"], c["name"])),
