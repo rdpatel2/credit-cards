@@ -169,6 +169,23 @@ class Ledger:
         with self.connection() as db:
             return [dict(row) for row in db.execute('SELECT * FROM rules ORDER BY display_name,scope')]
 
+    def breakdown_rows(self):
+        """Resolve saved merchant aliases without changing historical categories."""
+        rows = self.transactions()
+        with self.connection() as db:
+            rules = {(r['scope'], r['merchant_key']): dict(r) for r in db.execute('SELECT * FROM rules')}
+            aliases = {(r['scope'], r['alias']): r['merchant_key'] for r in db.execute('SELECT * FROM aliases')}
+        for row in rows:
+            row['merchant_group'] = row['merchant_key']
+            row['merchant_name'] = row['merchant_key'].title()
+            for scope in (f"card:{row['card_id']}", f"issuer:{row['issuer']}", 'global'):
+                key = aliases.get((scope, row['merchant_key']), row['merchant_key'])
+                rule = rules.get((scope, key))
+                if rule:
+                    row['merchant_group'], row['merchant_name'] = key, rule['display_name']
+                    break
+        return rows
+
     def accounts(self):
         with self.connection() as db:
             return [dict(row) for row in db.execute('SELECT a.*,COUNT(s.id) AS statement_count FROM accounts a LEFT JOIN statements s USING(account_key) GROUP BY a.account_key ORDER BY a.issuer,a.ending')]
