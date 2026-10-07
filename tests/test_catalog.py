@@ -47,3 +47,25 @@ def test_profile_defaults_and_corrupt_file(tmp_path):
     assert load_profile(tmp_path)["wallet"] == ["sample"]
     (tmp_path / "profile.json").write_text("broken")
     assert load_profile(tmp_path)["wallet"] == []
+
+
+def test_cancelled_refresh_preserves_cache(tmp_path):
+    store = CatalogStore(tmp_path, fake_fetch)
+    previous = store.refresh()
+    with pytest.raises(InterruptedError):
+        store.refresh(cancelled=lambda: True)
+    assert store.load() == previous
+
+
+def test_malformed_reward_record_cannot_poison_cache(tmp_path):
+    store = CatalogStore(tmp_path, fake_fetch)
+    previous = store.refresh()
+    def invalid(url):
+        value = fake_fetch(url)
+        if "/cards/" in url:
+            value["earningRates"] = [{"multiplier": float("nan"), "eligibleCategories": ["dining"]}]
+        return value
+    store.fetcher = invalid
+    with pytest.raises(ValueError):
+        store.refresh()
+    assert store.load() == previous

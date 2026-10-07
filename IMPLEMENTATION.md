@@ -22,3 +22,10 @@ Work proceeds on stacked branches; each step builds on the preceding commit.
 ## Validation
 
 Run data and recommendation tests, then an offscreen Qt workflow covering spending edits, wallet changes, filtering, profile persistence, and refresh error recovery. Live-download validation is separate from offline deterministic tests. Build distributable executables on each target OS using PyInstaller.
+
+## Completed validation
+
+- Live source download: 188 cards, with an offline snapshot included.
+- 23 tests covering cache preservation and cancellation, reward allocations, shared caps, offer filtering, and native GUI workflows.
+- Linux desktop executable built with PyInstaller and exercised with `--smoke-test` using the packaged snapshot and solver.
+- Windows and macOS build/test jobs configured in GitHub Actions; those platforms require execution of the jobs to confirm runtime compatibility.

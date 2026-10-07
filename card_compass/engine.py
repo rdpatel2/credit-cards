@@ -50,6 +50,8 @@ class Rule:
     categories: set[str]
     rate: float
     cap: float | None = None
+    cap_group: str | None = None
+    reward_cap: bool = False
 
 
 def rules_for(card, profile, today=None):
@@ -106,7 +108,26 @@ def rules_for(card, profile, today=None):
         except (ValueError, KeyError, TypeError):
             warnings.append("An earning rate could not be calculated")
             continue
-        rules.append(Rule(card["id"], cats, amount, cap))
+        group = None
+        # These products share a cap across multiple rate records. Other equal
+        # numeric caps (e.g. Blue Cash Everyday) are genuinely independent.
+        if cap is not None and card["id"] in {
+            "bank-of-america-customized-cash-rewards", "citi-costco-anywhere-visa",
+            "bank-of-america-business-advantage-customized-cash",
+        }:
+            group = f"{card['id']}:combined"
+        if card["id"] == "comenity-aaa-daily-advantage" and cap == 500:
+            # The upstream schema puts a REWARD cap into spendCap. Its terms
+            # identify the capped subset; other categories remain uncapped.
+            capped_cats = cats & {"groceries", "gas_stations", "wholesale_clubs"}
+            if capped_cats:
+                rules.append(Rule(card["id"], capped_cats, amount, 500, f"{card['id']}:rewards", True))
+            uncapped = cats - capped_cats
+            if uncapped:
+                rules.append(Rule(card["id"], uncapped, amount))
+            warnings.append("AAA combined $500 annual cashback cap normalized from source terms")
+        else:
+            rules.append(Rule(card["id"], cats, amount, cap, group))
     if not rules:
         warnings.append("No usable earning rates; estimate unavailable")
     return rules, list(dict.fromkeys(warnings))
@@ -127,16 +148,23 @@ def allocate(rules, spend):
                  if cat in rule.categories or "*" in rule.categories]
     if not variables:
         return Allocation(category_rewards={c: 0 for c in cats}, category_cards={c: [] for c in cats})
-    capped = [i for i, rule in enumerate(rules) if rule.cap is not None]
+    groups = {}
+    for i, rule in enumerate(rules):
+        if rule.cap is not None:
+            key = rule.cap_group or f"rule:{i}"
+            groups.setdefault(key, []).append(i)
+    capped = list(groups)
     matrix = lil_matrix((len(cats) + len(capped), len(variables)))
     rows = {c: i for i, c in enumerate(cats)}
     cap_rows = {r: len(cats) + i for i, r in enumerate(capped)}
     for col, (rule_id, cat) in enumerate(variables):
         matrix[rows[cat], col] = 1
-        if rule_id in cap_rows:
-            matrix[cap_rows[rule_id], col] = 1
+        rule = rules[rule_id]
+        key = rule.cap_group or f"rule:{rule_id}"
+        if key in cap_rows:
+            matrix[cap_rows[key], col] = rule.rate if rule.reward_cap else 1
     result = linprog([-rules[i].rate for i, _ in variables], A_ub=matrix.tocsr(),
-                     b_ub=[annual[c] for c in cats] + [rules[i].cap for i in capped],
+                     b_ub=[annual[c] for c in cats] + [min(rules[i].cap for i in groups[g]) for g in capped],
                      bounds=(0, None), method="highs")
     if not result.success:
         raise ValueError("Unable to allocate spending")

@@ -4,6 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -58,11 +59,25 @@ def validate_catalog(value):
             raise ValueError("Duplicate card identity")
         ids.add(card["id"])
         fee = card.get("annualFee", {})
-        if not isinstance(fee, dict) or not isinstance(fee.get("amount"), (int, float)) or fee["amount"] < 0:
+        if not isinstance(fee, dict) or not isinstance(fee.get("amount"), (int, float)) or not math.isfinite(fee["amount"]) or fee["amount"] < 0:
             raise ValueError("Invalid annual fee")
         for key in ("earningRates", "benefits", "offers"):
             if not isinstance(card.get(key, []), list):
                 raise ValueError(f"Invalid {key}")
+            if any(not isinstance(entry, dict) for entry in card.get(key, [])):
+                raise ValueError(f"Invalid {key} record")
+        for rate in card.get("earningRates", []):
+            multiplier = rate.get("multiplier")
+            if not isinstance(multiplier, (int, float)) or not math.isfinite(multiplier) or multiplier < 0:
+                raise ValueError("Invalid reward multiplier")
+            categories = rate.get("eligibleCategories")
+            if not isinstance(categories, list) or any(not isinstance(c, str) for c in categories):
+                raise ValueError("Invalid reward categories")
+        for offer in card.get("offers", []):
+            for key in ("rewardAmount", "spendRequirement", "timeframeDays"):
+                number = offer.get(key)
+                if number is not None and (not isinstance(number, (int, float)) or not math.isfinite(number) or number < 0):
+                    raise ValueError(f"Invalid offer {key}")
     return value
 
 

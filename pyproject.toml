@@ -18,5 +18,8 @@ card-compass = "card_compass.app:main"
 [tool.setuptools.package-data]
 card_compass = ["data/*.json"]
 
+[tool.setuptools.packages.find]
+include = ["card_compass*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

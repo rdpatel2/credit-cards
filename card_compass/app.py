@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -481,7 +482,7 @@ class MainWindow(QMainWindow):
         if match:
             parts.append(f"<h3>{money(match['ongoing'])} ongoing · {money(match['first_year'])} year one</h3><p>Extra rewards: {money(match['gain'])}/year. Counted signup value: {money(match['bonus'])}.</p>")
             gains = sorted(match["category_gains"].items(), key=lambda p: -p[1])
-            parts.append("<p>" + "<br>".join(f"{esc(label(c))}: {money(v)} extra/year" for c, v in gains if v > .01) + "</p>")
+            parts.append("<p>" + "<br>".join(f"{esc(label(c))}: {money(v)} change/year" for c, v in gains if abs(v) > .01) + "</p>")
         _, warnings = rules_for(card, self.profile)
         if warnings:
             parts.append("<h3>Assumptions to review</h3><ul>" + "".join(f"<li>{esc(w)}</li>" for w in warnings) + "</ul>")
@@ -643,6 +644,19 @@ def main():
     app.setOrganizationName("CardCompass")
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
-    window = MainWindow()
+    smoke = "--smoke-test" in sys.argv
+    temporary = tempfile.TemporaryDirectory(prefix="card-compass-smoke-") if smoke else None
+    window = MainWindow(Path(temporary.name) if temporary else None, auto_refresh=not smoke)
     window.show()
-    sys.exit(app.exec())
+    if smoke:
+        window.spend_widgets["groceries"].setValue(600)
+        window.spend_widgets["dining"].setValue(400)
+        window.recalculate()
+        if not window.cards or not window.matches:
+            raise RuntimeError("Packaged catalog or recommendation engine unavailable")
+        print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
+        QTimer.singleShot(100, window.close)
+    code = app.exec()
+    if temporary:
+        temporary.cleanup()
+    sys.exit(code)

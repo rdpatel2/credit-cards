@@ -91,3 +91,21 @@ def test_first_year_fee_waiver_and_no_bonus_by_default():
 def test_discontinued_and_business_cards_excluded():
     c = [card("a", [rate(1)], status="discontinued"), card("b", [rate(1)], variant="business")]
     assert recommend(c, default_profile())[0] == []
+
+
+def test_shared_cap_across_different_rate_records():
+    c = card("citi-costco-anywhere-visa", [
+        rate(5, ["costco_gas"], spendCap={"amount": 7000, "period": {"unit": "year"}}),
+        rate(4, ["gas_stations"], spendCap={"amount": 7000, "period": {"unit": "year"}}), rate(1)])
+    rules, _ = rules_for(c, {})
+    result = allocate(rules, {"costco_gas": 500, "gas_stations": 500})
+    assert result.total == pytest.approx(6000 * .05 + 1000 * .04 + 5000 * .01)
+
+
+def test_reward_cap_and_uncapped_subset():
+    c = card("comenity-aaa-daily-advantage", [
+        rate(5, ["groceries"], spendCap={"amount": 500, "period": {"unit": "year"}}),
+        rate(3, ["gas_stations", "streaming"], spendCap={"amount": 500, "period": {"unit": "year"}}), rate(1)])
+    rules, _ = rules_for(c, {})
+    result = allocate(rules, {"groceries": 1000, "gas_stations": 1000, "streaming": 100})
+    assert result.total == pytest.approx(500 + 14000 * .01 + 1200 * .03)

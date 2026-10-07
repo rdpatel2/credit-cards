@@ -6,4 +6,3 @@ build/
 dist/
 *.spec
 feed_sample.json
-*.png
