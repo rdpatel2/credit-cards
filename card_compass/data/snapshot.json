@@ -12305,9 +12305,24 @@
         {
           "offerType": "public",
           "rewardAmount": 75000,
-          "rewardUnit": "points",
+          "rewardUnit": "miles",
+          "rewardComponents": [
+            {
+              "rewardAmount": 75000,
+              "rewardUnit": "miles"
+            },
+            {
+              "rewardAmount": 300,
+              "rewardUnit": "travel_credit_usd",
+              "label": "Capital One Travel Stays credit",
+              "terms": "One-time credit for hotels and vacation rentals booked through Capital One Travel. Expires one year after account opening."
+            }
+          ],
           "spendRequirement": 4000,
-          "timeframeDays": 90
+          "timeframeDays": 90,
+          "limitedTime": true,
+          "terms": "Enjoy $300 to use on hotel and vacation rental bookings through Capital One Travel in your first cardholder year, plus earn 75,000 bonus miles once you spend $4,000 on purchases within the first 3 months from account opening. See issuer terms for eligibility and exclusions.",
+          "sourceUrl": "https://www.capitalone.com/credit-cards/venture/"
         }
       ],
       "offerSourceMeta": {
@@ -12316,6 +12331,11 @@
           "https://www.capitalone.com/credit-cards/venture/"
         ],
         "updatedBy": "agent"
+      },
+      "issuerOfferCheck": {
+        "status": "verified",
+        "checkedAt": "2026-10-07T21:06:52+00:00",
+        "sourceUrl": "https://www.capitalone.com/credit-cards/venture/"
       }
     },
     {

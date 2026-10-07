@@ -907,21 +907,36 @@ class MainWindow(QMainWindow):
         overview.append(f'<p>Estimated point / mile value: {point_value(card, self.profile):g}¢ each. Change it in Card settings.</p>')
 
         offers_html.append('<h3>Published signup offers</h3>')
+        from .offers import reward_components, reward_text, limited_time
+        issuer_check = card.get('issuerOfferCheck', {})
+        if issuer_check:
+            state = 'Checked against issuer' if issuer_check.get('status') == 'verified' else 'Current issuer offer unconfirmed · last available terms'
+            offers_html.append(f"<p><b>{esc(state)}</b><br>Last successful check: {esc(issuer_check.get('checkedAt', 'never'))}<br>{source_links([issuer_check.get('sourceUrl', '')])}</p>")
         published = available_offers(card, self.profile)
         if not published:
             offers_html.append('<p>No unexpired published offers in this source.</p>')
         for offer in published:
             value = money(offer['value']) + ' estimated value' if offer['value'] is not None else 'Value unresolved'
             spend = money(offer['spendRequirement']) if offer.get('spendRequirement') is not None else 'Unknown spending requirement'
-            amount = f"{offer.get('rewardAmount', 0):,.0f}"
-            unit = offer.get('rewardUnit', '')
-            reward = money(offer.get('rewardAmount', 0)) + ' cash back' if unit == 'cashback_usd' else amount + ' ' + unit.replace('_', ' ')
+            reward = ' + '.join(reward_text(c) for c in reward_components(offer))
+            if limited_time(offer):
+                offers_html.append('<p><span style="background-color:#fff1c2; color:#594000;"><b>&nbsp; Limited-time offer &nbsp;</b></span></p>')
             offers_html.append(f"<h3>{esc(reward)}</h3><p>{value}<br>Spend {spend} in {esc(offer.get('timeframeDays', 'unknown'))} days · {esc(offer.get('offerType', 'unknown'))} offer</p>")
+            for component in reward_components(offer):
+                if component.get('terms'):
+                    offers_html.append(f"<p>{esc(component['terms'])}</p>")
+            if offer['excludedComponents']:
+                excluded = ', '.join(reward_text(c) for c in offer['excludedComponents'])
+                offers_html.append(f"<p>{esc(excluded)} is shown separately and excluded from estimated value and rankings.</p>")
+            for perk in offer.get('additionalPerks', []):
+                offers_html.append(f"<p>{esc(perk)}</p>")
             offers_html.append('<p>' + ('Your stated spending pace meets the requirement.' if offer['feasible'] else 'The requirement exceeds your spending pace or is unresolved.') + (' Included in year one.' if offer['counted'] else ' Not counted in year one.') + '</p>')
             if offer.get('terms'):
                 offers_html.append(f"<p>{esc(offer['terms'])}</p>")
             if offer.get('expirationDate'):
                 offers_html.append(f"<p>Expires: {esc(offer['expirationDate'])}</p>")
+            elif limited_time(offer):
+                offers_html.append('<p>No offer deadline is published in this record. The promotion may change.</p>')
         offer_meta = card.get('offerSourceMeta', {})
         offers_html.append(f"<p>Offers reviewed by source: {esc(offer_meta.get('lastReviewedDate', 'unknown'))}<br>{source_links(offer_meta.get('sourceUrls', []))}</p>")
         offers_html.append('<p>Offers may vary by applicant. Confirm eligibility and current terms with the issuer.</p>')
@@ -941,6 +956,8 @@ class MainWindow(QMainWindow):
         meta = card.get('sourceMeta', {})
         sources.append(f"<h3>Card & benefit sources</h3><p>Reviewed by source: {esc(meta.get('lastReviewedDate', 'user supplied' if card['status'] == 'custom' else 'unknown'))}<br>{source_links(meta.get('sourceUrls', []))}</p>")
         sources.append(f"<h3>Offer sources</h3><p>Reviewed by source: {esc(offer_meta.get('lastReviewedDate', 'unknown'))}<br>{source_links(offer_meta.get('sourceUrls', []))}</p>")
+        if issuer_check:
+            sources.append(f"<h3>Issuer offer check</h3><p>{esc(issuer_check.get('status', 'unconfirmed'))} · Last successful check: {esc(issuer_check.get('checkedAt', 'never'))}<br>{source_links([issuer_check.get('sourceUrl', '')])}</p>")
         sources.append(f"<h3>Catalog freshness</h3><p>Downloaded: {esc(self.catalog.get('fetched_at', 'unknown'))}<br><a href='{SOURCE}'>Community catalog</a></p><p>A download refreshes published records; it does not independently verify every issuer’s terms. Review dates may be older than the download date.</p>")
         sources.append('<p>Issuer-domain labels identify the link’s domain; they do not certify current terms. Third-party references require confirmation against issuer terms.</p>')
         sources.append('<p>Card illustrations are stylized identifiers, not official issuer artwork.</p>')
@@ -1098,6 +1115,11 @@ def main():
         window.recalculate()
         if not window.cards or not window.matches:
             raise RuntimeError("Packaged catalog or recommendation engine unavailable")
+        from .offers import VENTURE_ID
+        window.show_card(window.by_id[VENTURE_ID])
+        offer_text = window.offer_details.toPlainText()
+        if '75,000 miles + $300 Capital One Travel Stays credit' not in offer_text or 'Limited-time offer' not in offer_text:
+            raise RuntimeError("Packaged compound signup offer unavailable")
         import pymupdf
         from .statements import parse_pdf
         pdf_path = Path(temporary.name) / 'smoke.pdf'
@@ -1125,6 +1147,7 @@ def main():
         if window.breakdown_page.report['net_cents'] != 300 or window.breakdown_page.report['count'] != 2:
             raise RuntimeError('Packaged spending breakdown unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
+        print('Offer smoke test: Venture miles, stays credit, and limited-time label displayed', flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)
         print('Breakdown smoke test: imported purchases total $3.00', flush=True)

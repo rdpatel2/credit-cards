@@ -62,6 +62,29 @@ def test_search_details_and_remove(window):
     assert window.wallet.count() == 0
 
 
+def test_venture_compound_offer_and_limited_time_label(window):
+    from card_compass.offers import VENTURE_ID
+    card = window.by_id[VENTURE_ID]
+    window.show_card(card)
+    text = window.offer_details.toPlainText()
+    assert '75,000 miles + $300 Capital One Travel Stays credit' in text
+    assert 'Limited-time offer' in text
+    assert 'hotel' in text and 'vacation rentals' in text
+    assert 'Expires one year after account opening' in text
+    assert 'excluded from estimated value and rankings' in text
+    assert 'Last successful check:' in text
+    card['issuerOfferCheck']['status'] = 'unconfirmed'
+    window.show_card(card)
+    assert 'Current issuer offer unconfirmed' in window.offer_details.toPlainText()
+    assert 'unconfirmed' in window.detail_browsers['Sources'].toPlainText()
+
+
+def test_offer_additional_perks_are_visible(window):
+    card = window.by_id['cardless-bilt-blue']
+    window.show_card(card)
+    assert 'Paid as Bilt Cash on approval' in window.offer_details.toPlainText()
+
+
 def test_refresh_failure_is_async_and_preserves_wallet(window, app):
     c = window.by_id["chase-freedom-unlimited"]
     window.show_card(c)
