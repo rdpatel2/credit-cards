@@ -73,3 +73,10 @@ The source review and full machine-readable report are in `docs/source-review.md
 3. Validation and packaging: positive/negative purchases, debit/credit exports, payments/refunds/fees, invalid rows, account isolation, CSV re-imports, native mapping/review tests, and packaged CSV persistence smoke coverage. All 87 tests pass. The rebuilt Linux executable passes catalog, PDF, and CSV smoke checks.
 
 CSV imports support mapped exports from any wallet issuer; PDF layouts remain BOFA/Amex selectable text. One file represents one statement period for spending averages. Cross-format duplicate detection requires matching transaction/account fields and cannot be guaranteed when exports differ. Original files are not retained or transmitted.
+
+## Rewards-category persistence · `fix/category-selection-saving`
+
+1. Replace single-choice rewards checklists with searchable dropdowns: highlighting an old checklist row previously saved no category unless its checkbox was also checked. Require a valid choice before saving, restore persisted choices, hide BOFA's unnecessary activation checkbox, and map source `online_shopping` to the existing `online_retail` spending category. Shared category pickers notify consumers when text changes or the same item is selected again.
+2. Regression validation: exercise real mouse selection and Save, verify Dining and Online Shopping coverage, reopen the application and settings to confirm persistence, reject an empty rewards choice, and check same-category reselection. All 91 tests pass. The rebuilt Linux executable passes its catalog, PDF, and CSV smoke checks.
+
+Existing profiles with an empty BOFA category list need an explicit selection after restarting; the app does not guess which issuer category an empty selection means. Select the current issuer category and Save to update Coverage. Shared caps still affect effective coverage rates.

@@ -87,7 +87,7 @@ def test_card_settings_choice_saved_shape(window):
     assert dialog.choices
     options, count = next(iter(dialog.choices.values()))
     from PySide6.QtCore import Qt
-    options.item(0).setCheckState(Qt.CheckState.Checked)
+    options.setCurrentIndex(1)
     settings = dialog.settings()
     assert any(len(v) == 1 for v in settings["selections"].values())
     dialog.close()
@@ -183,3 +183,59 @@ def test_full_bank_name_finds_customized_cash_and_dated_sources(window):
     assert 'Issuer domain' in sources
     assert '6%' in sources
     assert 'excluded' in sources
+
+
+@pytest.mark.parametrize('selected,spend_category', [('dining', 'dining'), ('online_shopping', 'online_retail')])
+def test_bofa_choice_saves_and_updates_coverage(window, app, selected, spend_category):
+    from PySide6.QtWidgets import QDialogButtonBox
+    from card_compass.ui import SearchableCategoryBox
+    ident = 'bank-of-america-customized-cash-rewards'
+    card = window.by_id[ident]
+    window.show_card(card)
+    window.add_wallet_card()
+    window.spend_widgets[spend_category].setValue(200)
+    window.spend_widgets['groceries'].setValue(100)
+    benefit = card['benefits'][0]['id']
+    def choose():
+        active = QApplication.activeModalWidget()
+        picker, _ = active.choices[benefit]
+        assert isinstance(picker, SearchableCategoryBox)
+        picker.lineEdit().selectAll()
+        query = 'online' if selected == 'online_shopping' else 'dining'
+        QTest.keyClicks(picker.lineEdit(), query)
+        completer = picker.completer()
+        completer.setCompletionPrefix(query)
+        completer.complete()
+        index = completer.completionModel().index(0, 0)
+        QTest.mouseClick(completer.popup().viewport(), Qt.MouseButton.LeftButton,
+                         pos=completer.popup().visualRect(index).center())
+        QTest.mouseClick(active.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save), Qt.MouseButton.LeftButton)
+    QTimer.singleShot(0, choose)
+    window.edit_card_settings()
+    saved = read_json(window.directory / 'profile.json')
+    assert saved['card_settings'][ident]['selections'][benefit] == [selected]
+    from card_compass.engine import label
+    row = next(i for i in range(window.coverage.rowCount()) if window.coverage.item(i, 0).text() == label(spend_category))
+    assert window.coverage.item(row, 2).text() == '3.00%'
+    reopened = MainWindow(window.directory, auto_refresh=False)
+    settings = CardSettings(reopened.by_id[ident], reopened.profile, reopened)
+    assert settings.choices[benefit][0].currentData() == selected
+    row = next(i for i in range(reopened.coverage.rowCount()) if reopened.coverage.item(i, 0).text() == label(spend_category))
+    assert reopened.coverage.item(row, 2).text() == '3.00%'
+    settings.close()
+    reopened.close()
+
+
+def test_single_reward_category_cannot_save_without_selection(window):
+    from PySide6.QtWidgets import QDialog
+    card = window.by_id['bank-of-america-customized-cash-rewards']
+    dialog = CardSettings(card, window.profile, window)
+    assert dialog.active.isHidden()
+    dialog.validate()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert 'Choose your current rewards category' in dialog.error.text()
+    options, _ = next(iter(dialog.choices.values()))
+    options.setCurrentIndex(options.findData('dining'))
+    dialog.validate()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    dialog.close()

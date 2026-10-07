@@ -81,3 +81,27 @@ def test_unrecognized_search_cannot_save_previous_category(app):
     assert combo.currentData() is None
     assert combo.count() == count
     combo.close()
+
+
+def test_reselecting_same_category_updates_save_validity(app):
+    from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    combo = category_picker(['groceries', 'dining'], 'dining')
+    save = QPushButton('Save')
+    layout.addWidget(combo)
+    layout.addWidget(save)
+    combo.selectionChanged.connect(lambda: save.setEnabled(bool(combo.currentData())))
+    container.show()
+    combo.lineEdit().selectAll()
+    QTest.keyClicks(combo.lineEdit(), 'unfinished')
+    assert not save.isEnabled()
+    combo.completer().popup().hide()
+    combo.showPopup()
+    app.processEvents()
+    index = combo.model().index(combo.findData('dining'), 0)
+    QTest.mouseClick(combo.view().viewport(), Qt.MouseButton.LeftButton,
+                     pos=combo.view().visualRect(index).center())
+    assert combo.currentData() == 'dining'
+    assert save.isEnabled()
+    container.close()

@@ -50,6 +50,8 @@ The installed `card-compass` command also launches the app. Linux requires a des
 
 The desktop workspace uses dedicated screens for matches, wallet, spending, coverage, catalog browsing, and preferences. Card details open in a separate window with Overview, Offers, Benefits, and Sources tabs. Click a card or press Enter to open its details; Escape closes the detail window. The interface supports a minimum window size of 1040 × 720, with scrollable settings and spending screens. Card illustrations and navigation icons are drawn as scalable vectors; illustrations are identifiers rather than official issuer artwork.
 
+For cards with one selectable rewards category, **Card settings** uses a searchable dropdown. Choose the category currently set with your issuer and click **Save**; Coverage updates using that selection and restores it when you reopen the app. Multi-category benefits retain checkbox lists. For Bank of America Customized Cash Rewards, choose **Dining** to apply its standing 3% dining rate; separate activation is not required. Its **Online Shopping** option maps to the **Online retail** spending bucket. Coverage displays effective rewards after any shared spending cap, so large spending amounts can show less than the advertised category rate.
+
 ## Import statements
 
 1. Add your cards to **My wallet**, then open **Statements → Import CSV or PDF**.
