@@ -21,6 +21,12 @@ The $0 annual fee, public $200 bonus for $1,000 spent within 90 days, recurring 
 
 The standing choice-category benefit requires selecting a category, rather than separate activation. The app now accepts an explicitly selected category without its generic activation checkbox. Gas and EV charging form one issuer choice, whereas the feed separates their options; the app’s dated review identifies this remaining modeling limit. APRs, all ancillary benefits, applicant eligibility, and every other card’s terms were not independently checked.
 
+## Venture Rewards signup offer — follow-up check on 2026-10-07
+
+Capital One's [Venture Rewards page](https://www.capitalone.com/credit-cards/venture/) labels its public offer limited-time and advertises 75,000 miles after $4,000 in purchases within three months, plus a one-time $300 Capital One Travel Stays credit. The credit applies to hotel and vacation-rental bookings through Capital One Travel and expires one year after account opening. This is distinct from Venture X's recurring annual travel credit. No promotion end date was published in the parsed offer.
+
+The community bonus JSON still lists only 75,000 points. The bundled Venture offer now contains both components with a dated issuer check. Refresh independently fetches this issuer page, conservatively parses supported wording, and marks cached terms unconfirmed if the page cannot be checked. This adapter covers Venture Rewards only; it does not certify the rest of the catalog. The restricted credit is displayed but excluded from ranking estimates.
+
 ## Missing-page responses requiring follow-up
 
 These source URLs returned 404 during this audit. The response alone does not establish that the card is discontinued.

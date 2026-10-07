@@ -88,3 +88,9 @@ Existing profiles with an empty BOFA category list need an explicit selection af
 3. Validation and documentation: all 99 tests pass, including filters, refund-only data, merchant aliases, preserved overrides, category edits, import removal, and the 1040 × 720 window. The layout was inspected at 1380 × 900 and 1040 × 720. The rebuilt Linux executable passes the new Breakdown smoke check alongside existing catalog/PDF/CSV checks.
 
 `docs/breakdown-preview.png` uses synthetic transactions. Breakdown shows actual imported totals, rather than recommendation spending averages. Original statements are not retained or transmitted.
+
+## Compound signup offers · `fix/compound-signup-offers`
+
+1. Offer model and issuer refresh: preserve multiple reward components, validate amounts, value cash and miles without counting restricted credits, and check Venture Rewards directly during each catalog refresh. Retain dated terms marked unconfirmed if the issuer page is unavailable or unsupported; remove ended credits and promotion labels after a successful check.
+2. Native offer display: show the full reward combination, readable limited-time badge, component restrictions, additional source perks, excluded-value notes, and issuer check provenance. Update the bundled Venture record against the live issuer page and extend the packaged offer smoke check.
+3. Verification and documentation: 114 tests pass, covering compound parsing, changed/ended promotions, unsupported wording, cached fallback, catalog persistence, valuation, and native details. Live feed/page comparison confirms the missing $300 stays credit. The rebuilt Linux package passes desktop, offer, PDF, CSV, and spending-breakdown smoke checks. Document the Venture-only issuer adapter and credit valuation limits.
