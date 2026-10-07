@@ -91,6 +91,8 @@ def test_dashboard_is_startup_page_and_tiles_open_active_cards(window):
     assert not window.dashboard_scroll.isHidden()
     assert window.catalog_table.isHidden()
     assert window.catalog_table.rowCount() == 0
+    assert window.catalog_table.columnCount() == 2
+    assert [window.catalog_table.horizontalHeaderItem(i).text() for i in range(2)] == ['CARD', 'ANNUAL FEE']
     for key, tile in window.category_tiles.items():
         tile.click()
         assert not window.catalog_table.isHidden()

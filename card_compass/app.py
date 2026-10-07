@@ -611,10 +611,9 @@ class MainWindow(QMainWindow):
         self.explore_count = text('', 'muted')
         browse_header.addWidget(self.explore_count, 1)
         explore_layout.addWidget(self.browse_header)
-        self.catalog_table = table(['CARD', 'ANNUAL FEE', 'AVAILABILITY'])
+        self.catalog_table = table(['CARD', 'ANNUAL FEE'])
         self.catalog_table.setItemDelegateForColumn(0, CardDelegate(self.catalog_table, artwork=self.artwork))
         self.catalog_table.setColumnWidth(1, 180)
-        self.catalog_table.setColumnWidth(2, 180)
         self.catalog_table.itemSelectionChanged.connect(self.select_catalog)
         self.catalog_table.cellClicked.connect(lambda row, col: self.select_catalog())
         self.catalog_table.itemActivated.connect(lambda item: self.select_catalog())
@@ -850,7 +849,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(card['name'] if card else f'Unavailable card · {ident}')
             item.setData(Qt.ItemDataRole.UserRole, ident)
             item.setData(CARD_ROLE, card)
-            item.setSizeHint(QSize(0, 100))
+            item.setSizeHint(QSize(0, 112))
             self.wallet.addItem(item)
         count = self.wallet.count()
         self.wallet_count.setText(f'{count} card' + ('' if count == 1 else 's') + ' in your wallet')
@@ -900,7 +899,7 @@ class MainWindow(QMainWindow):
                     item.setFont(font)
                     item.setForeground(QColor('#236347' if (match['ongoing'] if col == 2 else match['first_year']) > 0 else '#52665a'))
                 self.recommendations.setItem(row, col, item)
-            self.recommendations.setRowHeight(row, 88)
+            self.recommendations.setRowHeight(row, 104)
         self.recommendations.blockSignals(False)
         categories = sorted(self.profile['spend'], key=lambda k: -self.profile['spend'][k])
         self.coverage.setRowCount(len(categories))
@@ -978,14 +977,13 @@ class MainWindow(QMainWindow):
         self.catalog_table.blockSignals(True)
         self.catalog_table.setRowCount(len(self.explored))
         for row, card in enumerate(self.explored):
-            status = 'In your wallet' if card['id'] in self.profile['wallet'] else card['status'].title()
-            for col, value in enumerate([card['name'], money(card['annualFee']['amount']), status]):
+            for col, value in enumerate([card['name'], money(card['annualFee']['amount'])]):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, card['id'])
                 if col == 0:
                     item.setData(CARD_ROLE, card)
                 self.catalog_table.setItem(row, col, item)
-            self.catalog_table.setRowHeight(row, 84)
+            self.catalog_table.setRowHeight(row, 104)
         self.catalog_table.blockSignals(False)
         group_title = dict((key, title) for key, title, _, _ in GROUPS).get(self.discovery_group, 'All active cards')
         caption = 'Search results' if query else group_title
