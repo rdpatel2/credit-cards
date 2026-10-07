@@ -19,6 +19,7 @@ ALIASES = {
     "drug_stores": "drugstores", "airline_tickets": "airfare", "air_travel": "airfare",
     "airlines": "airfare", "flights": "airfare", "hotel": "hotels",
     "local_transit": "transit", "local_transit_and_commuting": "transit",
+    "online_shopping": "online_retail",
 }
 
 

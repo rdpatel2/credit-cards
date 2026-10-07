@@ -348,7 +348,7 @@ class ImportDialog(QDialog):
             self.merchants.setCellWidget(index, 2, category)
             self.merchants.setCellWidget(index, 3, scope)
             self.merchant_widgets[key] = (name, category, scope)
-            category.currentIndexChanged.connect(self.refresh_categories)
+            category.selectionChanged.connect(self.refresh_categories)
             name.currentTextChanged.connect(lambda value, combo=category: self.link_saved(value, combo))
         self.tabs.setTabText(0, f'New merchants ({len(groups)})')
         self.transactions.setRowCount(len(self.rows))
@@ -368,7 +368,7 @@ class ImportDialog(QDialog):
                 category = category_picker(self.categories, placeholder=False)
                 category.insertItem(0, 'Use merchant rule', None)
                 category.setCurrentIndex(0)
-                category.currentIndexChanged.connect(lambda unused, item=row, combo=category: self.override_changed(item, combo))
+                category.selectionChanged.connect(lambda item=row, combo=category: self.override_changed(item, combo))
                 self.transactions.setCellWidget(index, 5, category)
                 self.row_categories.append(category)
             else:

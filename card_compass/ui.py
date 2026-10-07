@@ -1,7 +1,7 @@
 """Desktop presentation primitives: scalable card artwork and a shared theme."""
 import hashlib
 
-from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtCore import Qt, QRectF, QSize, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget, QComboBox, QDoubleSpinBox, QDateEdit, QCompleter
@@ -24,6 +24,8 @@ class ScrollSafeDateEdit(QDateEdit):
 
 class SearchableCategoryBox(ScrollSafeComboBox):
     """Search existing labels; partial or unknown text is never a category."""
+    selectionChanged = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(True)
@@ -35,23 +37,28 @@ class SearchableCategoryBox(ScrollSafeComboBox):
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.setCompleter(completer)
         completer.activated[str].connect(self.select_completion)
-        # Callers use the same signal for selection and validity changes.
-        self.lineEdit().textEdited.connect(lambda _: self.currentIndexChanged.emit(self.currentIndex()))
+        # Editable text and selecting the same item do not necessarily change
+        # the index. Notify consumers whenever the selected value can change.
+        self.currentIndexChanged.connect(lambda _: self.selectionChanged.emit())
+        self.currentTextChanged.connect(lambda _: self.selectionChanged.emit())
+        self.activated.connect(lambda _: self.selectionChanged.emit())
 
     def select_completion(self, value):
         index = self.findText(value, Qt.MatchFlag.MatchExactly)
         if index >= 0:
             self.setCurrentIndex(index)
             self.setEditText(self.itemText(index))
-            self.currentIndexChanged.emit(index)
+            self.selectionChanged.emit()
 
     def currentData(self, role=Qt.ItemDataRole.UserRole):
-        if not self.selection_valid():
-            return None
-        return super().currentData(role)
+        index = self.selection_index()
+        return self.itemData(index, role) if index >= 0 else None
+
+    def selection_index(self):
+        return self.findText(self.currentText(), Qt.MatchFlag.MatchFixedString)
 
     def selection_valid(self):
-        return self.currentIndex() >= 0 and self.currentText() == self.itemText(self.currentIndex())
+        return self.selection_index() >= 0
 
 STYLE = """
 QWidget { color: #233d38; font-size: 13px; }

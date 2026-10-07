@@ -93,6 +93,13 @@ class CardSettings(QDialog):
         settings = profile.get("card_settings", {}).get(card["id"], {})
         self.active = QCheckBox("I have activated the categories that require activation")
         self.active.setChecked(settings.get("activated", False))
+        needs_activation = any(
+            b.get('bonusCategoryDetail', {}).get('requiresActivation')
+            for b in card.get('benefits', [])
+        ) or any(r.get('requiresActivation') for r in card.get('earningRates', []))
+        if card['id'] == 'bank-of-america-customized-cash-rewards':
+            needs_activation = False
+        self.active.setVisible(bool(needs_activation))
         layout.addWidget(self.active)
         self.choices = {}
         scroll = QScrollArea()
@@ -111,6 +118,17 @@ class CardSettings(QDialog):
                 note = QLabel("Choose the categories that will have the highest spending on this card each cycle.")
                 note.setWordWrap(True)
                 inner.addWidget(note)
+            if count == 1:
+                options = SearchableCategoryBox()
+                options.addItem('Select your current rewards category…', None)
+                for category in selection.get('options', []):
+                    options.addItem(label(category), category)
+                selected = settings.get('selections', {}).get(benefit['id'], [])
+                if selected:
+                    options.setCurrentIndex(max(0, options.findData(selected[0])))
+                inner.addWidget(options)
+                self.choices[benefit['id']] = (options, count)
+                continue
             options = QListWidget()
             for category in selection.get("options", []):
                 item = QListWidgetItem(label(category))
@@ -130,6 +148,8 @@ class CardSettings(QDialog):
         inner.addStretch()
         scroll.setWidget(content)
         layout.addWidget(scroll)
+        self.error = text('', 'muted', True)
+        layout.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.validate)
         buttons.rejected.connect(self.reject)
@@ -137,16 +157,26 @@ class CardSettings(QDialog):
 
     def validate(self):
         for options, count in self.choices.values():
+            if isinstance(options, SearchableCategoryBox):
+                if not options.currentData():
+                    self.error.setText('Choose your current rewards category before saving.')
+                    return
+                continue
             if sum(options.item(i).checkState() == Qt.CheckState.Checked for i in range(options.count())) > count:
                 QMessageBox.information(self, "Too many categories", f"Choose at most {count} categories for each benefit.")
                 return
         self.accept()
 
     def settings(self):
-        return {"activated": self.active.isChecked(), "selections": {
-            ident: [options.item(i).data(Qt.ItemDataRole.UserRole) for i in range(options.count())
-                    if options.item(i).checkState() == Qt.CheckState.Checked]
-            for ident, (options, _) in self.choices.items()}}
+        selections = {}
+        for ident, (options, _) in self.choices.items():
+            if isinstance(options, SearchableCategoryBox):
+                value = options.currentData()
+                selections[ident] = [value] if value else []
+            else:
+                selections[ident] = [options.item(i).data(Qt.ItemDataRole.UserRole) for i in range(options.count())
+                                    if options.item(i).checkState() == Qt.CheckState.Checked]
+        return {"activated": self.active.isChecked(), "selections": selections}
 
 
 class CustomCard(QDialog):
@@ -974,7 +1004,7 @@ class MainWindow(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         accept = buttons.button(QDialogButtonBox.StandardButton.Ok)
         accept.setEnabled(bool(choice.currentData()))
-        choice.currentIndexChanged.connect(lambda _: accept.setEnabled(bool(choice.currentData())))
+        choice.selectionChanged.connect(lambda: accept.setEnabled(bool(choice.currentData())))
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
