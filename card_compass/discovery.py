@@ -26,7 +26,14 @@ def card_groups(card):
     groups.update(units & {'points', 'miles'})
     categories = {c for r in rates for c in r.get('eligibleCategories', [])}
     categories.update(b.get('category', '') for b in card.get('benefits', []))
-    if any(any(token in c for token in ('travel', 'airfare', 'airline', 'flight', 'hotel', 'rental_car', 'vacation')) for c in categories):
+    travel_tokens = ('travel', 'airfare', 'airline', 'flight', 'hotel', 'rental_car', 'vacation')
+    travel_rates = any(any(token in c for token in travel_tokens)
+                       for r in rates for c in r.get('eligibleCategories', []))
+    travel_benefits = any(b.get('benefitType') in {'elite_status', 'statement_credit', 'lounge_access',
+                                                'trusted_traveler_credit', 'companion_ticket', 'free_night_award'}
+                          and any(token in b.get('category', '') for token in travel_tokens)
+                          for b in card.get('benefits', []))
+    if 'miles' in units or travel_rates or travel_benefits:
         groups.add('travel')
     if any(any(token in c for token in ('dining', 'restaurant')) for c in categories):
         groups.add('dining')

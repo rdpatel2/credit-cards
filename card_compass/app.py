@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QCheckBox,
+    QPushButton, QLineEdit, QCheckBox, QGridLayout,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QTextBrowser,
     QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QFormLayout,
     QMessageBox, QProgressBar, QAbstractItemView, QScrollArea, QStackedWidget, QAbstractSpinBox,
@@ -22,6 +22,7 @@ from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_o
 from .import_ui import ImportsPage
 from .breakdown_ui import BreakdownPage
 from .search import matches_card
+from .discovery import GROUPS, discoverable, card_groups
 from .source_audit import source_kind
 
 from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox
@@ -278,10 +279,9 @@ class MainWindow(QMainWindow):
         side.addWidget(text('YOUR WORKSPACE', 'navSection'))
         side.addSpacing(8)
         self.navigation = {}
-        for key, caption, glyph in [('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
+        for key, caption, glyph in [('explore', 'Dashboard', 'explore'), ('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
                                     ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'),
-                                    ('breakdown', 'Breakdown', 'spending'), ('coverage', 'Coverage', 'coverage'),
-                                    ('explore', 'Explore cards', 'explore')]:
+                                    ('breakdown', 'Breakdown', 'spending'), ('coverage', 'Coverage', 'coverage')]:
             button = QPushButton(caption)
             button.setObjectName('nav')
             button.setCheckable(True)
@@ -531,6 +531,7 @@ class MainWindow(QMainWindow):
         coverage_layout.addLayout(coverage_actions)
 
         explore_layout = page('explore')
+        self.discovery_group = None
         search_row = QHBoxLayout()
         self.search = QLineEdit()
         self.search.addAction(icon('explore', '#69857a', 19), QLineEdit.ActionPosition.LeadingPosition)
@@ -544,8 +545,62 @@ class MainWindow(QMainWindow):
         self.issuer_filter.currentIndexChanged.connect(self.filter_catalog)
         search_row.addWidget(self.issuer_filter)
         explore_layout.addLayout(search_row)
+        self.dashboard_scroll = QScrollArea()
+        self.dashboard_scroll.setWidgetResizable(True)
+        dashboard = QWidget()
+        dashboard.setObjectName('canvas')
+        dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.setContentsMargins(0, 0, 8, 0)
+        dashboard_layout.setSpacing(20)
+        dashboard_header = QHBoxLayout()
+        dashboard_header.addWidget(text('What kind of rewards are you looking for?', 'sectionTitle'), 1)
+        self.view_all_cards = QPushButton('View all active cards')
+        self.view_all_cards.setObjectName('quiet')
+        self.view_all_cards.clicked.connect(lambda: self.choose_discovery_group('all'))
+        dashboard_header.addWidget(self.view_all_cards)
+        dashboard_layout.addLayout(dashboard_header)
+        grid = QGridLayout()
+        grid.setSpacing(16)
+        self.category_tiles = {}
+        self.category_counts = {}
+        for index, (key, title, description, glyph) in enumerate(GROUPS):
+            tile = QPushButton()
+            tile.setObjectName('categoryTile')
+            tile.setAccessibleName('Browse ' + title + ' cards')
+            tile.setCursor(Qt.CursorShape.PointingHandCursor)
+            tile.setMinimumHeight(166)
+            inner = QVBoxLayout(tile)
+            inner.setContentsMargins(20, 18, 20, 18)
+            inner.setSpacing(8)
+            mark = QLabel()
+            mark.setPixmap(icon(glyph, '#236347', 25).pixmap(25, 25))
+            inner.addWidget(mark)
+            inner.addWidget(text(title, 'sectionTitle'))
+            inner.addWidget(text(description, 'muted', True), 1)
+            count = text('', 'pill')
+            inner.addWidget(count, 0, Qt.AlignmentFlag.AlignLeft)
+            for child in tile.findChildren(QLabel):
+                child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            tile.clicked.connect(lambda checked=False, group=key: self.choose_discovery_group(group))
+            self.category_tiles[key] = tile
+            self.category_counts[key] = count
+            grid.addWidget(tile, index // 3, index % 3)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+        dashboard_layout.addLayout(grid)
+        dashboard_layout.addWidget(text('Cards can appear in more than one category. Search above to find any active card.', 'muted', True))
+        dashboard_layout.addStretch()
+        self.dashboard_scroll.setWidget(dashboard)
+        explore_layout.addWidget(self.dashboard_scroll, 1)
+        self.browse_header = QWidget()
+        browse_header = QHBoxLayout(self.browse_header)
+        browse_header.setContentsMargins(0, 0, 0, 0)
+        self.back_to_dashboard = QPushButton('← Dashboard')
+        self.back_to_dashboard.clicked.connect(self.reset_discovery)
+        browse_header.addWidget(self.back_to_dashboard)
         self.explore_count = text('', 'muted')
-        explore_layout.addWidget(self.explore_count)
+        browse_header.addWidget(self.explore_count, 1)
+        explore_layout.addWidget(self.browse_header)
         self.catalog_table = table(['CARD', 'ANNUAL FEE', 'AVAILABILITY'])
         self.catalog_table.setItemDelegateForColumn(0, CardDelegate(self.catalog_table))
         self.catalog_table.setColumnWidth(1, 180)
@@ -619,7 +674,7 @@ class MainWindow(QMainWindow):
         self.sort.currentTextChanged.connect(self.schedule_update)
         self.business.toggled.connect(self.schedule_update)
         self.bonus.toggled.connect(self.schedule_update)
-        self.navigate('matches')
+        self.navigate('explore')
 
     def build_details(self):
         self.details_dialog = QDialog(self)
@@ -682,7 +737,7 @@ class MainWindow(QMainWindow):
             'imports': ('Teach your wallet once.', 'Import statements, remember merchants, and build your purchase history.'),
             'breakdown': ('Where your money goes.', 'Your largest spending categories and merchants, based on imported purchases.'),
             'coverage': ('Find the gaps.', 'See where your wallet works hard — and where it could do more.'),
-            'explore': ('A world of better rewards.', 'Browse cards, compare benefits, and build your wallet.'),
+            'explore': ('Find your next card.', 'Choose a reward category or search across active US credit cards.'),
             'preferences': ('Your rules. Your rewards.', 'Fine-tune the assumptions behind your recommendations.'),
         }
         self.active_page = key
@@ -748,11 +803,14 @@ class MainWindow(QMainWindow):
         self.issuer_filter.blockSignals(True)
         self.issuer_filter.clear()
         self.issuer_filter.addItem('All issuers', '')
-        for issuer in sorted({c['issuerId'] for c in self.cards}):
+        for issuer in sorted({c['issuerId'] for c in self.cards if discoverable(c)}):
             self.issuer_filter.addItem(issuer.replace('-', ' ').title(), issuer)
         index = self.issuer_filter.findData(current)
         self.issuer_filter.setCurrentIndex(max(0, index))
         self.issuer_filter.blockSignals(False)
+        for key, count_label in self.category_counts.items():
+            count = sum(key in card_groups(c) for c in self.cards)
+            count_label.setText(f'{count} card' + ('' if count == 1 else 's'))
         self.filter_catalog()
         self.imports_page.reload()
 
@@ -830,10 +888,32 @@ class MainWindow(QMainWindow):
             self.current_card = None
             self.details_dialog.close()
 
+    def choose_discovery_group(self, group):
+        self.discovery_group = group
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.issuer_filter.blockSignals(True)
+        self.issuer_filter.setCurrentIndex(0)
+        self.issuer_filter.blockSignals(False)
+        self.filter_catalog()
+
+    def reset_discovery(self):
+        self.choose_discovery_group(None)
+
     def filter_catalog(self, *args):
         query = self.search.text().strip().lower()
         issuer = self.issuer_filter.currentData() or ''
-        self.explored = [c for c in self.cards if (not issuer or c['issuerId'] == issuer) and matches_card(c, query)]
+        # A typed search always spans reward categories, even after opening a tile.
+        if query:
+            self.discovery_group = None
+        browsing = bool(query or issuer or self.discovery_group)
+        self.dashboard_scroll.setVisible(not browsing)
+        self.browse_header.setVisible(browsing)
+        self.catalog_table.setVisible(browsing)
+        self.explored = [c for c in self.cards if browsing and discoverable(c)
+                         and (not issuer or c['issuerId'] == issuer) and matches_card(c, query)
+                         and (not self.discovery_group or self.discovery_group == 'all' or self.discovery_group in card_groups(c))]
         self.catalog_table.blockSignals(True)
         self.catalog_table.setRowCount(len(self.explored))
         for row, card in enumerate(self.explored):
@@ -846,8 +926,10 @@ class MainWindow(QMainWindow):
                 self.catalog_table.setItem(row, col, item)
             self.catalog_table.setRowHeight(row, 84)
         self.catalog_table.blockSignals(False)
-        self.explore_count.setText(f'{len(self.explored)} cards  ·  Select a card to explore its rewards and published offers.')
-        self.search_empty.setVisible(not self.explored)
+        group_title = dict((key, title) for key, title, _, _ in GROUPS).get(self.discovery_group, 'All active cards')
+        caption = 'Search results' if query else group_title
+        self.explore_count.setText(f'{caption} · {len(self.explored)} cards')
+        self.search_empty.setVisible(browsing and not self.explored)
 
     def select_recommendation(self):
         row = self.recommendations.currentRow()
@@ -1044,7 +1126,8 @@ class MainWindow(QMainWindow):
     def update_freshness(self):
         when = self.catalog.get("fetched_at") or "never"
         cached = (self.directory / "catalog.json").exists()
-        self.freshness.setText(f"{len(self.catalog['cards'])} cards available\n{'Local cache' if cached else 'Bundled snapshot'} · {when[:10]}")
+        active = sum(c.get('status') == 'active' for c in self.catalog['cards'])
+        self.freshness.setText(f"{active} active cards\n{'Local cache' if cached else 'Bundled snapshot'} · {when[:10]}")
 
     def refresh(self):
         if self.worker and self.worker.isRunning():
@@ -1110,6 +1193,12 @@ def main():
     window = MainWindow(Path(temporary.name) if temporary else None, auto_refresh=not smoke)
     window.show()
     if smoke:
+        if window.active_page != 'explore' or window.dashboard_scroll.isHidden() or not window.catalog_table.isHidden():
+            raise RuntimeError("Packaged discovery dashboard unavailable")
+        window.category_tiles['cashback'].click()
+        if not window.explored or any(not discoverable(c) for c in window.explored):
+            raise RuntimeError("Packaged active-card discovery unavailable")
+        window.reset_discovery()
         window.spend_widgets["groceries"].setValue(600)
         window.spend_widgets["dining"].setValue(400)
         window.recalculate()
@@ -1147,6 +1236,7 @@ def main():
         if window.breakdown_page.report['net_cents'] != 300 or window.breakdown_page.report['count'] != 2:
             raise RuntimeError('Packaged spending breakdown unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
+        print('Dashboard smoke test: category tiles open active cards; dashboard is the startup page', flush=True)
         print('Offer smoke test: Venture miles, stays credit, and limited-time label displayed', flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)

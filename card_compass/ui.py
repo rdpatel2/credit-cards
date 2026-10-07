@@ -88,6 +88,9 @@ QFrame#hero { background: #edf4ed; border: 1px solid #dce8dd; border-radius: 14p
 QFrame#empty { background: #ffffff; border: 1px solid #e1e8e2; border-radius: 14px; }
 QPushButton { background: #ffffff; border: 1px solid #d8e1da; border-radius: 7px; padding: 10px 17px; color: #334e40; font-weight: 500; }
 QPushButton:hover { background: #eef4ef; border-color: #b5cbbb; }
+QPushButton#categoryTile { background: #ffffff; border: 1px solid #d8e1da; border-radius: 12px; text-align: left; padding: 0; }
+QPushButton#categoryTile:hover { background: #eef5ef; border-color: #7b9e89; }
+QPushButton#categoryTile:focus { border: 2px solid #398161; }
 QPushButton:pressed { background: #dceadf; }
 QPushButton#primary { background: #236347; color: #ffffff; border: 1px solid #236347; }
 QPushButton#primary:hover { background: #194f38; }

@@ -85,6 +85,58 @@ def test_offer_additional_perks_are_visible(window):
     assert 'Paid as Bilt Cash on approval' in window.offer_details.toPlainText()
 
 
+def test_dashboard_is_startup_page_and_tiles_open_active_cards(window):
+    from card_compass.discovery import card_groups
+    assert window.active_page == 'explore'
+    assert not window.dashboard_scroll.isHidden()
+    assert window.catalog_table.isHidden()
+    assert window.catalog_table.rowCount() == 0
+    for key, tile in window.category_tiles.items():
+        tile.click()
+        assert not window.catalog_table.isHidden()
+        assert window.dashboard_scroll.isHidden()
+        assert window.explored
+        assert all(c['status'] in ('active', 'custom') and key in card_groups(c) for c in window.explored)
+        assert window.category_counts[key].text().split()[0] == str(len(window.explored))
+    window.back_to_dashboard.click()
+    assert not window.dashboard_scroll.isHidden()
+    assert window.catalog_table.isHidden()
+
+
+def test_search_after_tile_spans_all_categories(window):
+    window.category_tiles['cashback'].click()
+    window.search.setText('Venture Rewards')
+    assert 'capital-one-venture-rewards' in {c['id'] for c in window.explored}
+    assert window.discovery_group is None
+    window.search.clear()
+    assert not window.dashboard_scroll.isHidden()
+
+
+def test_discontinued_cards_never_appear_in_discovery_but_wallet_is_preserved(window):
+    from card_compass.discovery import discoverable
+    old = next(c for c in window.cards if c['status'] == 'discontinued')
+    window.search.setText(old['id'])
+    assert window.catalog_table.rowCount() == 0
+    window.view_all_cards.click()
+    assert len(window.explored) == sum(discoverable(c) for c in window.cards)
+    assert all(c['status'] != 'discontinued' for c in window.explored)
+    window.profile['wallet'].append(old['id'])
+    window.reload_cards()
+    assert window.wallet.count() == 1
+    assert window.wallet.item(0).text() == old['name']
+    assert old['id'] not in {c['id'] for c in window.explored}
+
+
+def test_category_counts_and_results_update_after_refresh(window):
+    window.category_tiles['miles'].click()
+    before = len(window.explored)
+    ident = window.explored[0]['id']
+    next(c for c in window.catalog['cards'] if c['id'] == ident)['status'] = 'discontinued'
+    window.reload_cards()
+    assert len(window.explored) == before - 1
+    assert window.category_counts['miles'].text().split()[0] == str(before - 1)
+
+
 def test_refresh_failure_is_async_and_preserves_wallet(window, app):
     c = window.by_id["chase-freedom-unlimited"]
     window.show_card(c)
