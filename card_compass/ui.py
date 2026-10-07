@@ -209,25 +209,42 @@ class Metric(QFrame):
         layout.addWidget(text(description, "muted", True))
 
 
+def paint_artwork(painter, rect, pixmap):
+    """Fit without cropping or stretching; retain transparent source backgrounds."""
+    scale = min(rect.width() / pixmap.width(), rect.height() / pixmap.height())
+    width, height = pixmap.width() * scale, pixmap.height() * scale
+    target = QRectF(rect.center().x() - width / 2, rect.center().y() - height / 2, width, height)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+
+
 class CardArt(QWidget):
-    """Stylized, scalable identity artwork; not a reproduction of issuer card art."""
+    """Cached source artwork, with a scalable illustration while unavailable."""
     COLORS = [("#163c30", "#54805b"), ("#173440", "#507e88"), ("#34383c", "#777a79"), ("#584829", "#9c8550"), ("#433847", "#857084")]
 
-    def __init__(self, card=None, width=220, height=136):
+    def __init__(self, card=None, width=220, height=136, artwork=None):
         super().__init__()
         self.card = card or {"name": "Card Compass", "issuerId": "YOUR NEXT CARD"}
+        self.artwork = artwork
+        if artwork is not None:
+            artwork.imageReady.connect(lambda url: self.update())
         self.setFixedSize(width, height)
-        self.setAccessibleName(f"Card illustration: {self.card['name']}")
+        self.setAccessibleName(f"Card artwork: {self.card['name']}")
 
     def set_card(self, card):
         self.card = card
-        self.setAccessibleName(f"Card illustration: {card['name']}")
+        self.setAccessibleName(f"Card artwork: {card['name']}")
         self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        pixmap = self.artwork.pixmap(self.card) if self.artwork is not None else None
+        if pixmap is not None:
+            paint_artwork(p, rect, pixmap)
+            p.end()
+            return
         index = hashlib.sha256(self.card["issuerId"].encode()).digest()[0] % len(self.COLORS)
         first, second = self.COLORS[index]
         gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
@@ -269,6 +286,12 @@ CARD_ROLE = Qt.ItemDataRole.UserRole + 1
 
 class CardDelegate(QStyledItemDelegate):
     """Paint identities directly so long catalogs don't need hundreds of widgets."""
+    def __init__(self, parent=None, artwork=None):
+        super().__init__(parent)
+        self.artwork = artwork
+        if artwork is not None and parent is not None:
+            artwork.imageReady.connect(lambda url: parent.viewport().update())
+
     def paint(self, painter, option, index):
         card = index.data(CARD_ROLE)
         if not card:
@@ -289,22 +312,26 @@ class CardDelegate(QStyledItemDelegate):
             p.setPen(QPen(QColor('#edf1ee'), 1))
             p.drawLine(rect.bottomLeft(), rect.bottomRight())
         art = QRectF(rect.left() + 18, rect.center().y() - 27, 84, 54)
-        colors = CardArt.COLORS[hashlib.sha256(card['issuerId'].encode()).digest()[0] % len(CardArt.COLORS)]
-        gradient = QLinearGradient(art.topLeft(), art.bottomRight())
-        gradient.setColorAt(0, QColor(colors[0]))
-        gradient.setColorAt(1, QColor(colors[1]))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(gradient)
-        p.drawRoundedRect(art, 7, 7)
-        p.setBrush(QColor('#cdbf88'))
-        p.drawRoundedRect(QRectF(art.left() + 10, art.top() + 24, 15, 11), 2, 2)
         font = QFont(option.font)
-        font.setPixelSize(7)
-        p.setFont(font)
-        p.setPen(QColor('#e2eddd'))
-        issuer = card['issuerId'].replace('-', ' ').upper()
-        p.drawText(QRectF(art.left() + 10, art.top() + 8, 67, 12), Qt.AlignmentFlag.AlignLeft,
-                   p.fontMetrics().elidedText(issuer, Qt.TextElideMode.ElideRight, 67))
+        pixmap = self.artwork.pixmap(card) if self.artwork is not None else None
+        if pixmap is not None:
+            paint_artwork(p, art, pixmap)
+        else:
+            colors = CardArt.COLORS[hashlib.sha256(card['issuerId'].encode()).digest()[0] % len(CardArt.COLORS)]
+            gradient = QLinearGradient(art.topLeft(), art.bottomRight())
+            gradient.setColorAt(0, QColor(colors[0]))
+            gradient.setColorAt(1, QColor(colors[1]))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(gradient)
+            p.drawRoundedRect(art, 7, 7)
+            p.setBrush(QColor('#cdbf88'))
+            p.drawRoundedRect(QRectF(art.left() + 10, art.top() + 24, 15, 11), 2, 2)
+            font.setPixelSize(7)
+            p.setFont(font)
+            p.setPen(QColor('#e2eddd'))
+            issuer = card['issuerId'].replace('-', ' ').upper()
+            p.drawText(QRectF(art.left() + 10, art.top() + 8, 67, 12), Qt.AlignmentFlag.AlignLeft,
+                       p.fontMetrics().elidedText(issuer, Qt.TextElideMode.ElideRight, 67))
         left = art.right() + 18
         width = max(0, int(rect.right() - left - 16))
         font.setPixelSize(14)

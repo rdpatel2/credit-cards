@@ -137,6 +137,27 @@ def test_category_counts_and_results_update_after_refresh(window):
     assert window.category_counts['miles'].text().split()[0] == str(before - 1)
 
 
+def test_cached_card_artwork_renders_in_details_and_list(window, app):
+    from tests.test_artwork import image_bytes
+    from card_compass.artwork import artwork_url
+    card = window.by_id['capital-one-venture-rewards']
+    path, _ = window.artwork.paths(artwork_url(card))
+    path.parent.mkdir(parents=True)
+    path.write_bytes(image_bytes('#b83e2d'))
+    window.search.setText('Venture Rewards')
+    window.show()
+    window.show_card(card)
+    app.processEvents()
+    art = window.detail_art.grab().toImage()
+    assert art.pixelColor(art.width() // 2, art.height() // 2).name() == '#b83e2d'
+    table_image = window.catalog_table.viewport().grab().toImage()
+    assert table_image.pixelColor(50, 40).name() == '#b83e2d'
+    assert 'Card artwork' in window.detail_browsers['Sources'].toPlainText()
+    assert window.artwork is window.hero_art.artwork
+    assert window.artwork is window.wallet.itemDelegate().artwork
+    assert window.artwork is window.recommendations.itemDelegateForColumn(0).artwork
+
+
 def test_refresh_failure_is_async_and_preserves_wallet(window, app):
     c = window.by_id["chase-freedom-unlimited"]
     window.show_card(c)

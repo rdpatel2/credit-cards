@@ -23,6 +23,7 @@ from .import_ui import ImportsPage
 from .breakdown_ui import BreakdownPage
 from .search import matches_card
 from .discovery import GROUPS, discoverable, card_groups
+from .artwork import ArtworkCache
 from .source_audit import source_kind
 
 from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox
@@ -244,6 +245,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.closing = False
         self.current_card = None
+        self.artwork = ArtworkCache(self.directory, self, network_enabled=auto_refresh)
         self.build_ui()
         self.reload_cards()
         self.update_freshness()
@@ -373,7 +375,7 @@ class MainWindow(QMainWindow):
         hero_layout = QHBoxLayout(self.hero)
         hero_layout.setContentsMargins(20, 18, 20, 18)
         hero_layout.setSpacing(24)
-        self.hero_art = CardArt(width=210, height=128)
+        self.hero_art = CardArt(width=210, height=128, artwork=self.artwork)
         hero_layout.addWidget(self.hero_art)
         hero_info = QVBoxLayout()
         hero_info.setSpacing(6)
@@ -432,7 +434,7 @@ class MainWindow(QMainWindow):
         results_heading.addWidget(self.sort)
         matches.addLayout(results_heading)
         self.recommendations = table(['CARD', 'ANNUAL FEE', 'ONGOING VALUE', 'YEAR ONE'])
-        self.recommendations.setItemDelegateForColumn(0, CardDelegate(self.recommendations))
+        self.recommendations.setItemDelegateForColumn(0, CardDelegate(self.recommendations, artwork=self.artwork))
         self.recommendations.setColumnWidth(1, 130)
         self.recommendations.setColumnWidth(2, 160)
         self.recommendations.setColumnWidth(3, 140)
@@ -468,7 +470,7 @@ class MainWindow(QMainWindow):
         empty.addWidget(CardArt())
         wallet_layout.addWidget(self.wallet_empty)
         self.wallet = QListWidget()
-        self.wallet.setItemDelegate(CardDelegate(self.wallet))
+        self.wallet.setItemDelegate(CardDelegate(self.wallet, artwork=self.artwork))
         self.wallet.setSpacing(3)
         self.wallet.itemClicked.connect(self.select_wallet)
         self.wallet.itemActivated.connect(self.select_wallet)
@@ -602,7 +604,7 @@ class MainWindow(QMainWindow):
         browse_header.addWidget(self.explore_count, 1)
         explore_layout.addWidget(self.browse_header)
         self.catalog_table = table(['CARD', 'ANNUAL FEE', 'AVAILABILITY'])
-        self.catalog_table.setItemDelegateForColumn(0, CardDelegate(self.catalog_table))
+        self.catalog_table.setItemDelegateForColumn(0, CardDelegate(self.catalog_table, artwork=self.artwork))
         self.catalog_table.setColumnWidth(1, 180)
         self.catalog_table.setColumnWidth(2, 180)
         self.catalog_table.itemSelectionChanged.connect(self.select_catalog)
@@ -694,7 +696,7 @@ class MainWindow(QMainWindow):
         header.addWidget(close)
         layout.addLayout(header)
         identity = QHBoxLayout()
-        self.detail_art = CardArt(width=194, height=122)
+        self.detail_art = CardArt(width=194, height=122, artwork=self.artwork)
         identity.addWidget(self.detail_art)
         info = QVBoxLayout()
         self.detail_name = text('', 'heroTitle', True)
@@ -1042,7 +1044,11 @@ class MainWindow(QMainWindow):
             sources.append(f"<h3>Issuer offer check</h3><p>{esc(issuer_check.get('status', 'unconfirmed'))} · Last successful check: {esc(issuer_check.get('checkedAt', 'never'))}<br>{source_links([issuer_check.get('sourceUrl', '')])}</p>")
         sources.append(f"<h3>Catalog freshness</h3><p>Downloaded: {esc(self.catalog.get('fetched_at', 'unknown'))}<br><a href='{SOURCE}'>Community catalog</a></p><p>A download refreshes published records; it does not independently verify every issuer’s terms. Review dates may be older than the download date.</p>")
         sources.append('<p>Issuer-domain labels identify the link’s domain; they do not certify current terms. Third-party references require confirmation against issuer terms.</p>')
-        sources.append('<p>Card illustrations are stylized identifiers, not official issuer artwork.</p>')
+        from .artwork import artwork_url
+        image_url = artwork_url(card)
+        if image_url:
+            sources.append(f'<h3>Card artwork</h3><p>Image supplied by the catalog; cached locally when viewed.<br>{source_links([image_url])}</p>')
+        sources.append('<p>A generated illustration is used when card artwork is unavailable. Artwork may depict an older card design.</p>')
         for name, content in [('Overview', overview), ('Offers', offers_html), ('Benefits', benefits_html), ('Sources', sources)]:
             browser = self.detail_browsers[name]
             position = browser.verticalScrollBar().value()
@@ -1150,6 +1156,7 @@ class MainWindow(QMainWindow):
 
     def refreshed(self, value):
         self.catalog = value
+        self.artwork.refresh()
         self.reload_cards()
         self.recalculate()
         self.update_freshness()
@@ -1166,6 +1173,7 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
+        self.artwork.close()
         self.timer.stop()
         self.details_dialog.close()
         self.save_profile()
