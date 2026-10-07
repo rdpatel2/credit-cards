@@ -157,3 +157,20 @@ def test_cancellation_waits_for_extraction_without_saving(owner, monkeypatch, ap
     app.processEvents()
     assert review.cancelled
     assert owner.imports_page.ledger.transactions() == []
+
+
+def test_unfinished_purchase_category_search_prevents_save(owner):
+    from PySide6.QtTest import QTest
+    review = dialog(owner)
+    review.card.setCurrentIndex(1)
+    for _, category, _ in review.merchant_widgets.values():
+        category.setCurrentIndex(category.findData('dining'))
+    review.confirm.setChecked(True)
+    assert review.save.isEnabled()
+    category = next(combo for combo in review.row_categories if combo)
+    category.lineEdit().selectAll()
+    QTest.keyClicks(category.lineEdit(), 'unfinished search')
+    assert not review.save.isEnabled()
+    category.setCurrentIndex(category.findData('groceries'))
+    assert review.save.isEnabled()
+    review.reject()

@@ -60,6 +60,8 @@ The desktop workspace uses dedicated screens for matches, wallet, spending, cove
 
 Later imports reuse saved merchant choices. Re-imported transactions are skipped by default; explicitly include a flagged duplicate only if it represents another purchase. Identical purchases within one statement retain their separate occurrences. Payments, interest, fees, and reward credits are excluded from spending; merchant refunds reduce their category totals.
 
+Type part of a category name in a category picker to search, then choose a matching suggestion with the keyboard or mouse. Search ignores capitalization and matches words anywhere in the label. This works for statement categories and **Add a category**; Card settings has search fields for its category lists. Unfinished category searches cannot be saved as purchase overrides. Scrolling over dropdowns, dates, and numeric fields does not change their values; use keyboard input or an explicit dropdown selection.
+
 The **Saved merchants** tab lets you change defaults and optionally apply them to past transactions; individual overrides are preserved. **Accounts** lets you correct a linked wallet card. **Imported files** lets you remove an import while retaining merchant choices, then re-import it if needed. Reapply imported spending after changing or removing transactions to update the recommendation inputs.
 
 Monthly spending is calculated separately for each card: category totals divided by the number of distinct imported statement closing months, then added across cards. This is an average of imported statement periods, so import complete statements for the months you want represented. The preview replaces all manual spending buckets after confirmation; coverage settings remain separate.

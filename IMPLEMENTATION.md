@@ -53,3 +53,8 @@ No original PDFs are retained or transmitted. Initial layout support is based on
 Darken secondary text, table headings, issuer labels, disabled controls, and coverage gap values. Brighten sidebar captions and make selected tabs more distinct. Apply an explicit light Qt palette and dropdown/date-field colors so native controls remain consistent when the desktop uses a dark theme.
 
 Validation: all 58 tests pass. The dashboard and statement review were visually inspected offscreen, and dropdown/date-field colors were checked with a simulated dark desktop palette. Sampled secondary, disabled, sidebar, and gap text pairs exceed a 4.5:1 contrast ratio. The rebuilt Linux executable passes its desktop and statement smoke checks.
+
+## Category search and deliberate input · `feat/searchable-categories`
+
+1. Shared controls: searchable category dropdowns with case-insensitive substring suggestions, valid-selection checks, and scroll-safe dropdown/numeric/date controls. Search also filters the category lists in Card settings without removing saved selections.
+2. Validation and documentation: keyboard completion, invalid text rejection, unfinished purchase override guards, focused/unfocused wheel checks, and preserved keyboard changes. All 63 tests pass. The rebuilt Linux executable passes its desktop and statement smoke checks.
