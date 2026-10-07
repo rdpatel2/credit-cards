@@ -47,3 +47,9 @@ Redesign validation: 27 tests pass, the layout was inspected at 1380 × 900 and 
 Validation: 58 tests pass, including generated BOFA/Amex PDFs, merchant memory, duplicate occurrences, refunds, rule scopes, historical edits, atomic rollback, and native UI import/cancellation workflows. The Linux executable's smoke test exercises PDF parsing, SQLite persistence, remembered categories, and duplicate detection alongside the catalog and solver. Windows/macOS runtime checks remain pending the configured platform jobs.
 
 No original PDFs are retained or transmitted. Initial layout support is based on the supplied statement text and synthetic fixtures; scanned PDFs/OCR and CSV imports are outside this feature.
+
+## Readability corrections · `fix/ui-contrast`
+
+Darken secondary text, table headings, issuer labels, disabled controls, and coverage gap values. Brighten sidebar captions and make selected tabs more distinct. Apply an explicit light Qt palette and dropdown/date-field colors so native controls remain consistent when the desktop uses a dark theme.
+
+Validation: all 58 tests pass. The dashboard and statement review were visually inspected offscreen, and dropdown/date-field colors were checked with a simulated dark desktop palette. Sampled secondary, disabled, sidebar, and gap text pairs exceed a 4.5:1 contrast ratio. The rebuilt Linux executable passes its desktop and statement smoke checks.
