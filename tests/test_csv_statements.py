@@ -76,3 +76,9 @@ def test_custom_columns_can_be_mapped():
     statement = parse_csv_text('When,Vendor,USD\n2026-09-01,SHOP,10\n',
                                {'date': 'When', 'description': 'Vendor', 'amount': 'USD'}, 'positive')
     assert statement.transactions[0].amount_cents == 1000
+
+
+def test_generic_credit_type_at_merchant_is_refund_not_reward_credit():
+    statement = parse('Date,Description,Amount,Type\n09/01/26,SHOP,-2.00,Credit\n09/02/26,REWARDS CREDIT,-1.00,Credit\n09/03/26,INTEREST CHARGE,3.00,\n09/04/26,ANNUAL FEE,10.00,\n')
+    assert [t.kind for t in statement.transactions] == ['refund', 'credit', 'interest', 'fee']
+    assert statement.purchases_cents == -200

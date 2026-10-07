@@ -115,11 +115,11 @@ def section_kind(line, previous):
 
 def kind_for(description, amount, section):
     upper = description.upper()
-    if 'INTEREST CHARGED' in upper:
+    if re.search(r'\b(?:INTEREST CHARGED?|PURCHASE INTEREST|INTEREST ON PURCHASES)\b', upper):
         return 'interest'
     if re.search(r'\b(?:BALANCE TRANSFER|CASH ADVANCE)\b', upper):
         return 'transfer'
-    if re.search(r'\b(?:ANNUAL MEMBERSHIP FEE|LATE PAYMENT FEE)\b', upper):
+    if re.search(r'\b(?:ANNUAL (?:MEMBERSHIP )?FEE|LATE (?:PAYMENT )?FEE)\b', upper):
         return 'fee'
     if re.search(r'\b(?:PAYMENT|AUTOPAY)\b', upper):
         return 'payment'

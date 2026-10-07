@@ -1072,8 +1072,16 @@ def main():
         remembered = ledger.preview(statement, 'smoke-card')[0]
         if count != 1 or not remembered['duplicate'] or remembered['category'] != 'groceries':
             raise RuntimeError('Packaged PDF extraction, merchant memory, or duplicate checks unavailable')
+        from .csv_statements import parse_csv_text
+        csv_statement = parse_csv_text('Date,Description,Amount\n2026-09-07,FOOD LION #0001 EXAMPLE NC,2.00\n',
+            {'date': 'Date', 'description': 'Description', 'amount': 'Amount'}, 'positive',
+            issuer='amex', closing_date='2026-09-21', account_ending='00000')
+        csv_rows = ledger.preview(csv_statement, 'smoke-card')
+        if csv_rows[0]['category'] != 'groceries' or ledger.commit(csv_statement, 'smoke-card', csv_rows, {}) != 1:
+            raise RuntimeError('Packaged CSV parsing or merchant memory unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
+        print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)
         QTimer.singleShot(100, window.close)
     code = app.exec()
     if temporary:

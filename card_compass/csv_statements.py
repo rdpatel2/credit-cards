@@ -94,6 +94,8 @@ def csv_date(value, closing=None):
 
 
 def parse_csv_text(text, mapping, convention, issuer='csv', closing_date=None, account_ending=''):
+    if account_ending and not re.fullmatch(r'\d{4,5}', account_ending):
+        raise ValueError('Account ending must contain only the last 4 or 5 digits.')
     columns, records = csv_table(text)
     if convention not in ('positive', 'negative', 'debit_credit'):
         raise ValueError('Choose whether purchases are positive, negative, or in debit/credit columns.')
@@ -125,7 +127,7 @@ def parse_csv_text(text, mapping, convention, issuer='csv', closing_date=None, a
             posted = csv_date(cell('posting_date'), closing_date) if cell('posting_date') else when
             raw_kind = cell('type').lower()
             explicit = {'payment': 'payment', 'interest': 'interest', 'fee': 'fee',
-                        'transfer': 'transfer', 'credit': 'credit', 'refund': 'refund', 'return': 'refund'}.get(raw_kind)
+                        'transfer': 'transfer', 'refund': 'refund', 'return': 'refund'}.get(raw_kind)
             kind = explicit or kind_for(cell('description'), amount, 'purchase')
             if kind == 'refund' and amount > 0:
                 raise ValueError('Refund is positive under this convention. Check the amount signs.')

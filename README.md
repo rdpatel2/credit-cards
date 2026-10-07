@@ -7,7 +7,7 @@ A native desktop app for choosing your next US credit card. Runs on Windows, mac
 - Search cards, benefits, earning categories, annual fees, and published signup offers.
 - Add your existing cards to a saved wallet, including manually entered cards.
 - Enter monthly spending; Coverage puts your highest spending categories first.
-- Import BOFA or Amex statement PDFs, categorize each new merchant once, and reuse your saved choices on later imports.
+- Import CSV statement exports or BOFA/Amex PDFs, categorize each new merchant once, and reuse your saved choices on later imports.
 - Infer coverage from your wallet, or override a category's cash-equivalent rate. Set **0%** for an uncovered category and **Auto** to derive it from cards.
 - Compare **additional** annual rewards against your existing wallet, after the new card's fee. Recurring and first-year estimates are separate.
 - Refresh the public catalog in the background on every startup. Offline starts use the last successful cache, then the bundled snapshot.
@@ -52,11 +52,12 @@ The desktop workspace uses dedicated screens for matches, wallet, spending, cove
 
 ## Import statements
 
-1. Add your cards to **My wallet**, then open **Statements → Import statement PDF**.
-2. Select the matching wallet card and verify the statement closing date. If the date needs correction, click **Read dates again** before reviewing.
-3. In **New merchants**, choose a category for each unfamiliar merchant. Repeated purchases are grouped together. You can link a description to an existing merchant and remember the category across all cards, for this issuer, or for this card only.
-4. Review the purchases, exclusions, and parsing warnings. A purchase's category can be overridden without changing the merchant's default. Confirm the review and save.
-5. Optionally choose **Use imported spending** to preview and replace your monthly spending inputs. Saving a statement alone does not replace them.
+1. Add your cards to **My wallet**, then open **Statements → Import CSV or PDF**.
+2. For CSVs, confirm the suggested column mappings and select the amount convention: purchases positive, purchases negative, or separate debit/credit columns. Date, description, and amount columns are required; reference, posting date, account, category, and type columns are optional. You can supply the account’s last 4–5 digits if the export omits it.
+3. Select the matching wallet card and verify the statement closing date. If the date needs correction, click **Read dates again** before reviewing. CSVs initially infer it from the latest posting date.
+4. In **New merchants**, choose a category for each unfamiliar merchant. Repeated purchases are grouped together. You can link a description to an existing merchant and remember the category across all cards, for this issuer, or for this card only.
+5. Review the purchases, exclusions, and parsing warnings. A purchase's category can be overridden without changing the merchant's default. Confirm the review and save.
+6. Optionally choose **Use imported spending** to preview and replace your monthly spending inputs. Saving a statement alone does not replace them.
 
 Later imports reuse saved merchant choices. Re-imported transactions are skipped by default; explicitly include a flagged duplicate only if it represents another purchase. Identical purchases within one statement retain their separate occurrences. Payments, interest, fees, and reward credits are excluded from spending; merchant refunds reduce their category totals.
 
@@ -68,7 +69,11 @@ Monthly spending is calculated separately for each card: category totals divided
 
 The initial parsers support selectable-text BOFA and Amex layouts based on the supplied examples. Tests use synthetic PDFs; other statement layouts may need adjustments. Scanned PDFs require OCR, which is not included, and password-protected PDFs must be unlocked first. BOFA purchase totals are checked when available. Printed Amex merchant categories are displayed as hints; your choices determine the spending categories. Reference numbers do not determine categories, and these categories do not verify issuer bonus eligibility.
 
-PDFs are read locally and are not retained by the app. Extracted transactions, account endings, import metadata, and merchant choices are saved locally in `transactions.sqlite3`.
+CSV imports work with any wallet card when its export can be mapped to the required columns. Comma, semicolon, and tab delimiters and quoted values are supported; dates use US `MM/DD/YYYY`, `MM/DD/YY`, or ISO `YYYY-MM-DD`, with US dollar amounts. Export one billing period per file for spending averages. Invalid transaction rows stop the import with a row number rather than silently dropping purchases. CSVs have no statement total to reconcile. XLS/XLSX workbooks are not supported; export them as CSV first.
+
+Re-importing the same CSV reuses merchant rules and duplicate checks. PDF and CSV exports may use different descriptions, posting dates, references, or account endings, so duplicate detection across formats is not guaranteed. Review overlapping imports before saving, and remove an earlier import before replacing it with corrected column/sign settings. CSVs without account endings use the selected wallet card as the account identity.
+
+PDFs and CSVs are read locally and are not retained by the app. Extracted transactions, account endings, import metadata, and merchant choices are saved locally in `transactions.sqlite3`.
 
 ## Data and calculation limits
 

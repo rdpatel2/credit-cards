@@ -65,3 +65,11 @@ Validation: all 58 tests pass. The dashboard and statement review were visually 
 2. Validation and audit: refresh into a temporary directory, audit all 188 cards and 445 unique source links, record HTTP results without treating them as term verification, and test discovery, source display, provenance, and reward selection. All 69 tests pass. The rebuilt Linux package passes its desktop and PDF smoke checks.
 
 The source review and full machine-readable report are in `docs/source-review.md` and `docs/source-audit.json`. Only the specified BOFA terms were independently checked against issuer pages; the broad catalog audit checks provenance and link availability. The BOFA introductory earning boost remains excluded from numeric estimates and is explicitly shown as a limitation.
+
+## CSV and PDF statements · `feat/csv-statement-imports`
+
+1. CSV parser: suggested and custom column mappings, explicit amount conventions, US/ISO dates, quoted values and common delimiters, optional account/reference/category/type data, exact cents, and invalid-row rejection.
+2. Desktop workflow: one CSV/PDF picker, a scrollable CSV mapping dialog and sample rows, background file reading, issuer association from the selected wallet card, and reuse of merchant review, category memory, duplicate checks, and spending previews.
+3. Validation and packaging: positive/negative purchases, debit/credit exports, payments/refunds/fees, invalid rows, account isolation, CSV re-imports, native mapping/review tests, and packaged CSV persistence smoke coverage. All 87 tests pass. The rebuilt Linux executable passes catalog, PDF, and CSV smoke checks.
+
+CSV imports support mapped exports from any wallet issuer; PDF layouts remain BOFA/Amex selectable text. One file represents one statement period for spending averages. Cross-format duplicate detection requires matching transaction/account fields and cannot be guaranteed when exports differ. Original files are not retained or transmitted.
