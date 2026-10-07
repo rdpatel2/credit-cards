@@ -8,12 +8,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QDate
 from PySide6.QtWidgets import (QWidget, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QPushButton, QCheckBox, QFileDialog, QTabWidget, QTableWidget,
+    QPushButton, QCheckBox, QLineEdit, QScrollArea, QFileDialog, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QDialogButtonBox)
 
 from .engine import DEFAULT_CATEGORIES, canonical, label
 from .ledger import Ledger
 from .statements import extract_pdf_text, parse_statement_text
+from .csv_statements import read_csv_text, csv_table, suggested_columns, parse_csv_text, FIELDS
 from .ui import ScrollSafeComboBox, ScrollSafeDateEdit, SearchableCategoryBox, text, surface, icon
 
 EXTRA_CATEGORIES = {'auto_services': 'Auto services', 'medical': 'Healthcare',
@@ -63,13 +64,77 @@ class ExtractThread(QThread):
 
     def run(self):
         try:
-            self.result.emit(extract_pdf_text(self.path))
+            self.result.emit(read_csv_text(self.path) if Path(self.path).suffix.lower() == '.csv' else extract_pdf_text(self.path))
         except Exception as exc:
             self.failed.emit(str(exc))
 
 
+class CsvMappingDialog(QDialog):
+    def __init__(self, value, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Choose CSV columns · Card Compass')
+        self.resize(820, 700)
+        columns, records = csv_table(value)
+        guesses = suggested_columns(columns)
+        layout = QVBoxLayout(self)
+        layout.addWidget(text('Match your CSV columns.', 'sectionTitle'))
+        layout.addWidget(text('Choose the amount convention using a known purchase. Categories from the bank are hints; your saved merchant rules still apply.', 'muted', True))
+        content = QWidget()
+        form = QFormLayout(content)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        self.convention = ScrollSafeComboBox()
+        for title, key in [('Choose amount convention…', None), ('Purchases are positive; payments/refunds negative', 'positive'),
+                           ('Purchases are negative; payments/refunds positive', 'negative'),
+                           ('Separate debit (purchase) and credit columns', 'debit_credit')]:
+            self.convention.addItem(title, key)
+        form.addRow('Amount convention', self.convention)
+        self.columns = {}
+        for field in FIELDS:
+            combo = ScrollSafeComboBox()
+            combo.addItem('Not supplied', None)
+            for column in columns:
+                combo.addItem(column, column)
+            combo.setCurrentIndex(max(0, combo.findData(guesses[field])))
+            form.addRow(field.replace('_', ' ').title(), combo)
+            self.columns[field] = combo
+        self.ending = QLineEdit()
+        self.ending.setMaxLength(5)
+        self.ending.setPlaceholderText('Optional: last 4–5 digits, if no account column')
+        form.addRow('Account ending', self.ending)
+        layout.addWidget(scroll, 1)
+        preview = grid(columns)
+        preview.setMaximumHeight(170)
+        preview.setRowCount(min(3, len(records)))
+        for row, record in enumerate(records[:3]):
+            for col, cell in enumerate(record[:len(columns)]):
+                preview.setItem(row, col, QTableWidgetItem(cell))
+        layout.addWidget(preview)
+        self.error = text('', 'muted', True)
+        layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.validate)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def config(self):
+        return {'mapping': {field: combo.currentData() for field, combo in self.columns.items()},
+                'convention': self.convention.currentData(), 'account_ending': self.ending.text().strip()}
+
+    def validate(self):
+        config = self.config()
+        required = ['date', 'description'] + (['debit', 'credit'] if config['convention'] == 'debit_credit' else ['amount'])
+        if not config['convention'] or any(not config['mapping'][field] for field in required):
+            self.error.setText('Choose the amount convention and all required date, description, and amount columns.')
+        elif config['account_ending'] and not (config['account_ending'].isdigit() and len(config['account_ending']) in (4, 5)):
+            self.error.setText('Account ending must contain only the last 4 or 5 digits.')
+        else:
+            self.accept()
+
+
 class ImportDialog(QDialog):
-    def __init__(self, path, ledger, cards, categories, parent=None, extracted_text=None):
+    def __init__(self, path, ledger, cards, categories, parent=None, extracted_text=None, csv_config=None):
         super().__init__(parent)
         self.setWindowTitle('Import a statement · Card Compass')
         self.resize(1080, 830)
@@ -77,6 +142,7 @@ class ImportDialog(QDialog):
         self.path = Path(path)
         self.ledger, self.cards, self.categories = ledger, cards, categories
         self.extracted_text = extracted_text
+        self.csv_config = csv_config
         self.statement = None
         self.preview_valid = False
         self.rows, self.merchant_widgets = [], {}
@@ -87,7 +153,7 @@ class ImportDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)
         layout.addWidget(text('Teach your wallet once.', 'heroTitle'))
-        layout.addWidget(text(self.path.name + ' · Your PDF stays on this device.', 'muted'))
+        layout.addWidget(text(self.path.name + ' · Your file stays on this device.', 'muted'))
         form = QHBoxLayout()
         self.card = ScrollSafeComboBox()
         self.card.addItem('Select the card for this statement…', None)
@@ -105,7 +171,7 @@ class ImportDialog(QDialog):
         self.reparse.clicked.connect(lambda: self.parse(use_selected_date=True))
         form.addWidget(self.reparse)
         layout.addLayout(form)
-        self.summary = text('Reading PDF text locally…', 'sectionTitle', True)
+        self.summary = text('Reading statement locally…', 'sectionTitle', True)
         layout.addWidget(self.summary)
         self.warning = text('', 'muted', True)
         layout.addWidget(self.warning)
@@ -137,7 +203,7 @@ class ImportDialog(QDialog):
         actions.addWidget(self.save)
         layout.addLayout(actions)
         self.confirm.toggled.connect(self.validate)
-        self.card.currentIndexChanged.connect(self.preview)
+        self.card.currentIndexChanged.connect(self.card_changed)
         self.closing.dateChanged.connect(self.date_changed)
         if extracted_text is not None:
             self.parse()
@@ -156,7 +222,23 @@ class ImportDialog(QDialog):
     def extracted(self, value):
         if not self.cancelled:
             self.extracted_text = value
+            if self.path.suffix.lower() == '.csv' and self.csv_config is None:
+                try:
+                    mapping = CsvMappingDialog(value, self)
+                    if mapping.exec() != QDialog.DialogCode.Accepted:
+                        self.reject()
+                        return
+                    self.csv_config = mapping.config()
+                except ValueError as exc:
+                    self.failed(str(exc))
+                    return
             self.parse()
+
+    def card_changed(self, *args):
+        if self.path.suffix.lower() == '.csv':
+            self.parse(use_selected_date=self.statement is not None)
+        else:
+            self.preview()
 
     def failed(self, message):
         self.summary.setText('This statement needs attention.')
@@ -195,7 +277,15 @@ class ImportDialog(QDialog):
         self.confirm.setChecked(False)
         try:
             closing = self.closing.date().toString('yyyy-MM-dd') if use_selected_date else None
-            self.statement = parse_statement_text(self.extracted_text, closing_date=closing)
+            if self.path.suffix.lower() == '.csv':
+                if self.csv_config is None:
+                    self.extracted(self.extracted_text)
+                    return
+                card = next((c for c in self.cards if c['id'] == self.card.currentData()), None)
+                issuer = {'bank-of-america': 'bofa', 'american-express': 'amex'}.get(card['issuerId'], card['issuerId']) if card else 'csv'
+                self.statement = parse_csv_text(self.extracted_text, **self.csv_config, issuer=issuer, closing_date=closing)
+            else:
+                self.statement = parse_statement_text(self.extracted_text, closing_date=closing)
             self.statement.filename = self.path.name
             self.statement.source_hash = hashlib.sha256(self.path.read_bytes()).hexdigest() if self.path.exists() else hashlib.sha256(self.extracted_text.encode()).hexdigest()
             self.closing.blockSignals(True)
@@ -222,7 +312,7 @@ class ImportDialog(QDialog):
             self.readiness.setText('Link this statement to a card in your wallet. The account will be remembered.')
             return
         card = next(c for c in self.cards if c['id'] == card_id)
-        expected_issuer = {'bofa': 'bank-of-america', 'amex': 'american-express'}[self.statement.issuer]
+        expected_issuer = {'bofa': 'bank-of-america', 'amex': 'american-express'}.get(self.statement.issuer, self.statement.issuer)
         if card['issuerId'] not in (expected_issuer, 'custom'):
             self.failed('The selected card issuer does not match this statement.')
             return
@@ -363,13 +453,13 @@ class ImportsPage(QWidget):
         actions = QHBoxLayout()
         self.summary = text('Import statements. Remember merchants.', 'sectionTitle')
         actions.addWidget(self.summary, 1)
-        import_button = QPushButton('Import statement PDF')
+        import_button = QPushButton('Import CSV or PDF')
         import_button.setObjectName('primary')
         import_button.setIcon(icon('plus', '#ffffff', 16))
-        import_button.clicked.connect(self.import_pdf)
+        import_button.clicked.connect(self.import_statement)
         actions.addWidget(import_button)
         layout.addLayout(actions)
-        layout.addWidget(text('BOFA and Amex PDFs with selectable text. You choose each new merchant’s category; the app remembers it.', 'muted', True))
+        layout.addWidget(text('CSV exports with mapped columns, or BOFA and Amex PDFs with selectable text. Choose new merchant categories once.', 'muted', True))
         self.tabs = QTabWidget()
         self.transactions = grid(['MERCHANT / DESCRIPTION', 'DATE', 'AMOUNT', 'CATEGORY', 'CARD'])
         self.transactions.itemDoubleClicked.connect(self.edit_transaction)
@@ -437,13 +527,13 @@ class ImportsPage(QWidget):
                 self.accounts.setItem(index, col, QTableWidgetItem(value))
         self.status.setText('Double-click a purchase for a one-time override, or a saved merchant to change its default. Payments and interest do not count as spending.')
 
-    def import_pdf(self):
+    def import_statement(self):
         cards = [card for card in self.owner.cards if card['id'] in self.owner.profile['wallet']]
         if not cards:
-            QMessageBox.information(self, 'Add your card first', 'Add the statement’s card to your wallet, then import its PDF.')
+            QMessageBox.information(self, 'Add your card first', 'Add the statement’s card to your wallet, then import its CSV or PDF.')
             self.owner.navigate('explore')
             return
-        path, _ = QFileDialog.getOpenFileName(self, 'Choose a statement PDF', '', 'PDF statements (*.pdf)')
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose a statement CSV or PDF', '', 'Statement files (*.csv *.pdf);;CSV exports (*.csv);;PDF statements (*.pdf)')
         if not path:
             return
         dialog = ImportDialog(path, self.ledger, cards, self.categories(), self)
@@ -497,7 +587,7 @@ class ImportsPage(QWidget):
             return
         imported = self.saved_imports[index]
         result = QMessageBox.question(self, 'Remove this import?',
-            'Remove the transactions originally saved from this file? Saved merchant categories and account links will remain. You can import the PDF again. Spending inputs stay as they are until you choose Use imported spending.',
+            'Remove the transactions originally saved from this file? Saved merchant categories and account links will remain. You can import the file again. Spending inputs stay as they are until you choose Use imported spending.',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if result == QMessageBox.StandardButton.Yes:
             self.ledger.remove_import(imported['id'])
@@ -513,7 +603,7 @@ class ImportsPage(QWidget):
         layout = QVBoxLayout(dialog)
         layout.addWidget(text('Change the linked card', 'sectionTitle'))
         choices = ScrollSafeComboBox()
-        expected = {'bofa': 'bank-of-america', 'amex': 'american-express'}[account['issuer']]
+        expected = {'bofa': 'bank-of-america', 'amex': 'american-express'}.get(account['issuer'], account['issuer'])
         for card in self.owner.cards:
             if card['id'] in self.owner.profile['wallet'] and card['issuerId'] in (expected, 'custom'):
                 choices.addItem(card['name'], card['id'])

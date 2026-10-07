@@ -174,3 +174,69 @@ def test_unfinished_purchase_category_search_prevents_save(owner):
     category.setCurrentIndex(category.findData('groceries'))
     assert review.save.isEnabled()
     review.reject()
+
+
+def test_csv_mapping_requires_amount_convention(owner):
+    from card_compass.import_ui import CsvMappingDialog
+    from tests.test_csv_statements import BOFA
+    mapping = CsvMappingDialog(BOFA, owner)
+    mapping.validate()
+    assert mapping.result() != QDialog.DialogCode.Accepted
+    assert mapping.error.text()
+    mapping.convention.setCurrentIndex(mapping.convention.findData('positive'))
+    mapping.validate()
+    assert mapping.result() == QDialog.DialogCode.Accepted
+    assert mapping.config()['mapping']['description'] == 'Payee'
+
+
+def test_csv_review_saves_and_reimports_with_merchant_memory(owner, tmp_path):
+    from card_compass.csv_statements import suggested_columns, csv_table
+    from tests.test_csv_statements import BOFA
+    path = tmp_path / 'statement.csv'
+    path.write_text(BOFA)
+    config = {'mapping': suggested_columns(csv_table(BOFA)[0]), 'convention': 'positive', 'account_ending': '0001'}
+    cards = [owner.by_id[c] for c in owner.profile['wallet']]
+    first = ImportDialog(path, owner.imports_page.ledger, cards, owner.imports_page.categories(), owner,
+                         extracted_text=BOFA, csv_config=config)
+    first.card.setCurrentIndex(1)
+    first.closing.setDate(QDate(2026, 9, 17))
+    first.parse(use_selected_date=True)
+    assert first.statement.issuer == 'bofa'
+    for _, category, _ in first.merchant_widgets.values():
+        category.setCurrentIndex(category.findData('groceries'))
+    first.confirm.setChecked(True)
+    assert first.save.isEnabled()
+    first.commit()
+    assert first.imported_count == 3
+    second = ImportDialog(path, owner.imports_page.ledger, cards, owner.imports_page.categories(), owner,
+                          extracted_text=BOFA, csv_config=config)
+    second.card.setCurrentIndex(1)
+    assert second.merchant_widgets == {}
+    assert all(row['duplicate'] for row in second.rows)
+    assert not second.save.isEnabled()
+    second.reject()
+
+
+def test_csv_accepts_wallet_cards_beyond_pdf_issuers(owner):
+    from card_compass.csv_statements import suggested_columns, csv_table
+    from tests.test_csv_statements import BOFA
+    card = owner.by_id['chase-freedom-unlimited']
+    config = {'mapping': suggested_columns(csv_table(BOFA)[0]), 'convention': 'positive'}
+    review = ImportDialog('/unused.csv', owner.imports_page.ledger, [card], owner.imports_page.categories(), owner,
+                          extracted_text=BOFA, csv_config=config)
+    review.card.setCurrentIndex(1)
+    assert review.preview_valid
+    assert review.statement.issuer == 'chase'
+    review.reject()
+
+
+def test_statement_chooser_offers_csv_and_pdf(owner, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QPushButton
+    filters = []
+    def choose(*args):
+        filters.append(args[-1])
+        return '', ''
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', choose)
+    owner.imports_page.import_statement()
+    assert '*.csv' in filters[0] and '*.pdf' in filters[0]
+    assert any(button.text() == 'Import CSV or PDF' for button in owner.imports_page.findChildren(QPushButton))
