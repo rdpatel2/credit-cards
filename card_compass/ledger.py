@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     description TEXT NOT NULL, merchant_key TEXT NOT NULL, amount_cents INTEGER NOT NULL,
     kind TEXT NOT NULL, reference TEXT NOT NULL, issuer_category TEXT NOT NULL, page INTEGER NOT NULL,
     category TEXT, manual_override INTEGER NOT NULL DEFAULT 0,
+    one_off INTEGER NOT NULL DEFAULT 0 CHECK(one_off IN (0,1)),
     UNIQUE(account_key, fingerprint, occurrence)
 );
 '''
@@ -59,6 +60,9 @@ class Ledger:
         self.path = directory / 'transactions.sqlite3'
         with self.connection() as db:
             db.executescript(SCHEMA)
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(transactions)')}
+            if 'one_off' not in columns:
+                db.execute('ALTER TABLE transactions ADD COLUMN one_off INTEGER NOT NULL DEFAULT 0 CHECK(one_off IN (0,1))')
 
     @contextmanager
     def connection(self):
@@ -106,7 +110,7 @@ class Ledger:
                              'merchant_key': key, 'category': rule['category'] if rule else None,
                              'merchant_name': rule['display_name'] if rule else key.title(),
                              'duplicate': duplicate, 'include': not duplicate,
-                             'manual_override': False})
+                             'manual_override': False, 'one_off': False})
         return rows
 
     @staticmethod
@@ -152,10 +156,10 @@ class Ledger:
                     occurrence = db.execute('SELECT COALESCE(MAX(occurrence),0)+1 FROM transactions WHERE account_key=? AND fingerprint=?', (account, row['fingerprint'])).fetchone()[0]
                 cursor = db.execute('''INSERT OR IGNORE INTO transactions(
                     statement_id,account_key,fingerprint,occurrence,date,posting_date,description,merchant_key,
-                    amount_cents,kind,reference,issuer_category,page,category,manual_override)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    amount_cents,kind,reference,issuer_category,page,category,manual_override,one_off)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (ident, account, row['fingerprint'], occurrence, row['date'], row['posting_date'], row['description'],
-                     row['merchant_key'], row['amount_cents'], row['kind'], row['reference'], row['issuer_category'], row['page'], category, int(row.get('manual_override', False))))
+                     row['merchant_key'], row['amount_cents'], row['kind'], row['reference'], row['issuer_category'], row['page'], category, int(row.get('manual_override', False)), int(bool(row.get('one_off', False)))))
                 count += cursor.rowcount
         return count
 
@@ -219,6 +223,10 @@ class Ledger:
         with self.connection() as db:
             db.execute('UPDATE transactions SET category=?,manual_override=1 WHERE id=? AND kind IN (\'purchase\',\'refund\')', (category, ident))
 
+    def set_one_off(self, ident, one_off):
+        with self.connection() as db:
+            db.execute("UPDATE transactions SET one_off=? WHERE id=? AND kind IN ('purchase','refund')", (int(bool(one_off)), ident))
+
     def monthly_spending(self):
         """Average each card's spending over its imported statement closing months."""
         amounts, months = defaultdict(lambda: defaultdict(int)), defaultdict(set)
@@ -226,7 +234,7 @@ class Ledger:
             # Include zero-spend statements in the denominator.
             for row in db.execute('SELECT a.card_id,s.closing_date FROM statements s JOIN accounts a USING(account_key)'):
                 months[row['card_id']].add(row['closing_date'][:7])
-            for row in db.execute('SELECT a.card_id,t.category,t.amount_cents FROM transactions t JOIN accounts a USING(account_key) WHERE t.kind IN (\'purchase\',\'refund\')'):
+            for row in db.execute('SELECT a.card_id,t.category,t.amount_cents FROM transactions t JOIN accounts a USING(account_key) WHERE t.kind IN (\'purchase\',\'refund\') AND t.one_off=0'):
                 if row['category']:
                     amounts[row['card_id']][row['category']] += row['amount_cents']
         totals = defaultdict(float)

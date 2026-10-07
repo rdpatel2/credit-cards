@@ -9,6 +9,66 @@ def choices(rows, category='dining'):
             for row in rows if row['kind'] in ('purchase', 'refund') and not row['category']}
 
 
+def test_one_off_flight_excluded_from_averages_but_kept_in_history(tmp_path):
+    ledger = Ledger(tmp_path)
+    statement = parse_statement_text(AMEX)
+    rows = ledger.preview(statement, 'amex-card')
+    mappings = choices(rows, 'groceries')
+    flight = next(row for row in rows if 'DELTA' in row['description'])
+    mappings[flight['merchant_key']]['category'] = 'airfare'
+    flight['one_off'] = True
+    ledger.commit(statement, 'amex-card', rows, mappings)
+    spending, months = ledger.monthly_spending()
+    assert spending.get('airfare', 0) == 0
+    assert spending['groceries'] == 167.33
+    assert months == {'amex-card': 1}
+    saved = next(row for row in ledger.transactions() if 'DELTA' in row['description'])
+    assert saved['one_off'] == 1
+    assert len(ledger.transactions()) == 13
+    from card_compass.breakdown import spending_breakdown
+    assert spending_breakdown(ledger.breakdown_rows())['net_cents'] == 75413
+    ledger.set_one_off(saved['id'], False)
+    assert ledger.monthly_spending()[0]['airfare'] == 586.8
+    assert Ledger(tmp_path).transactions()[0]['one_off'] == 0
+
+
+def test_one_off_purchase_and_refund_are_independent_and_keep_month_denominator(tmp_path):
+    ledger = Ledger(tmp_path)
+    for month, value in [('09', '$100.00'), ('10', '$200.00')]:
+        statement = parse_statement_text(f'American Express Closing Date {month}/21/26\nAccount Ending 1-00002\n{month}/06/26 SHOP EXAMPLE {value}')
+        rows = ledger.preview(statement, 'card')
+        ledger.commit(statement, 'card', rows, choices(rows, 'groceries'))
+    purchase = ledger.transactions()[0]
+    ledger.set_one_off(purchase['id'], True)
+    assert ledger.monthly_spending() == ({'groceries': 50}, {'card': 2})
+    assert Ledger(tmp_path).transactions()[0]['one_off'] == 1
+    statement = parse_statement_text('American Express Closing Date 10/21/26\nAccount Ending 1-00002\n10/07/26 SHOP EXAMPLE -$200.00')
+    rows = ledger.preview(statement, 'card')
+    rows[0]['one_off'] = True
+    ledger.commit(statement, 'card', rows, {})
+    assert ledger.monthly_spending()[0]['groceries'] == 50
+    assert all(r['category'] == 'groceries' for r in ledger.transactions())
+    duplicate = ledger.preview(statement, 'card')
+    ledger.commit(statement, 'card', duplicate, {})
+    assert ledger.transactions()[0]['one_off'] == 1
+
+
+def test_old_database_migrates_without_losing_transactions(tmp_path):
+    import sqlite3
+    from card_compass.ledger import SCHEMA
+    with sqlite3.connect(tmp_path / 'transactions.sqlite3') as db:
+        db.executescript(SCHEMA.replace('    one_off INTEGER NOT NULL DEFAULT 0 CHECK(one_off IN (0,1)),\n', ''))
+        db.execute("INSERT INTO accounts VALUES ('account','amex','0001','card')")
+        db.execute("INSERT INTO statements VALUES (1,'hash','old.pdf','account','2026-09-21')")
+        db.execute("""INSERT INTO transactions VALUES (1,1,'account','fp',1,'2026-09-01','2026-09-01',
+                    'SHOP','SHOP',1000,'purchase','','',1,'groceries',0)""")
+    ledger = Ledger(tmp_path)
+    assert ledger.transactions()[0]['one_off'] == 0
+    assert ledger.monthly_spending()[0]['groceries'] == 10
+    ledger.set_one_off(1, True)
+    assert Ledger(tmp_path).transactions()[0]['one_off'] == 1
+
+
 def test_first_import_and_reimport_skip_duplicates(tmp_path):
     ledger = Ledger(tmp_path)
     statement = parse_statement_text(BOFA)
