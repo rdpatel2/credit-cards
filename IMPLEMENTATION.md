@@ -29,3 +29,11 @@ Run data and recommendation tests, then an offscreen Qt workflow covering spendi
 - 23 tests covering cache preservation and cancellation, reward allocations, shared caps, offer filtering, and native GUI workflows.
 - Linux desktop executable built with PyInstaller and exercised with `--smoke-test` using the packaged snapshot and solver.
 - Windows and macOS build/test jobs configured in GitHub Actions; those platforms require execution of the jobs to confirm runtime compatibility.
+
+## Desktop redesign · `feat/gui-redesign`
+
+Replace the dense three-column screen with a sidebar and dedicated task pages. Give matches a summary dashboard, a featured recommendation, and readable rows with scalable card identities. Move global assumptions to Preferences and separate card details into Overview, Offers, Benefits, and Sources tabs. Preserve saved profiles and the existing recommendation engine.
+
+Validate navigation, automatic saving, reopening detail windows with the keyboard, issuer filtering, and the layout at 1040 × 720. Rebuild the Linux distributable so the packaged app includes the redesign; Windows/macOS checks remain in the configured platform workflow.
+
+Redesign validation: 27 tests pass, the layout was inspected at 1380 × 900 and 1040 × 720, and the rebuilt Linux executable passes the packaged smoke test. `docs/gui-preview.png` shows sample data in the redesigned workspace.

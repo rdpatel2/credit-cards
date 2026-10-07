@@ -2,6 +2,8 @@
 
 A native desktop app for choosing your next US credit card. Runs on Windows, macOS, and Linux using Python and Qt. There is no web server.
 
+[Preview the desktop workspace](docs/gui-preview.png) (sample wallet and spending).
+
 - Search cards, benefits, earning categories, annual fees, and published signup offers.
 - Add your existing cards to a saved wallet, including manually entered cards.
 - Enter monthly spending; Coverage puts your highest spending categories first.
@@ -38,12 +40,14 @@ The installed `card-compass` command also launches the app. Linux requires a des
 
 ## Use
 
-1. In **Explore**, search for each card you own, select it, and click **Add to wallet**. Use **Add manually** for cards missing from the catalog.
-2. Enter your monthly spending in separate buckets. **Add spending category** includes merchant and travel-portal categories. Move that spending out of other buckets to avoid double counting.
+1. In **Explore cards**, search for each card you own, select it, and click **Add to wallet**. Use **My wallet → Add manually** for cards missing from the catalog.
+2. In **Spending**, enter monthly purchases in separate buckets. **Add a category** includes merchant and travel-portal categories. Move that spending out of other buckets to avoid double counting.
 3. Use **Coverage** to see gaps against your adjustable target, initially 2%. Manual coverage entries replace inferred wallet coverage for that category.
-4. Compare **Matches**, set your maximum annual fee, and choose ongoing or first-year sorting. Open a card to see its incremental category rewards and source terms.
+4. Compare **Your matches**, which highlights your strongest match and its incremental value. Choose ongoing or first-year sorting, and use **Preferences** to set your maximum annual fee, point values, coverage target, and bonus assumptions.
 5. Adjust point values, selections, and activation in **Card settings**. The default assumption is **1 cent per point/mile across all programs**; change it to your actual redemption values, especially for hotel points.
 6. Signup offers are displayed automatically. Enable **Count public signup bonuses** only if you expect to qualify. Only public, unexpired offers with spend requirements your stated spending pace can meet enter the first-year estimate. Alternative offers are compared individually; they are not added together.
+
+The desktop workspace uses dedicated screens for matches, wallet, spending, coverage, catalog browsing, and preferences. Card details open in a separate window with Overview, Offers, Benefits, and Sources tabs. Click a card or press Enter to open its details; Escape closes the detail window. The interface supports a minimum window size of 1040 × 720, with scrollable settings and spending screens. Card illustrations and navigation icons are drawn as scalable vectors; illustrations are identifiers rather than official issuer artwork.
 
 ## Data and calculation limits
 
@@ -82,3 +86,5 @@ Distributables are in `dist/`. Build on each target operating system: PyInstalle
 ## Implementation history
 
 See [IMPLEMENTATION.md](IMPLEMENTATION.md). The branches form a stack: `feat/catalog` → `feat/recommendations` → `feat/desktop` → `chore/release`. Each branch retains its completed milestone. `main` is advanced to the fully verified result after the release step. No remote push is required to run locally.
+
+The desktop redesign is on `feat/gui-redesign`, with separate commits for the visual components, task-based workspace and workflow tests, and documentation/preview. The completed redesign is integrated into `main`.
