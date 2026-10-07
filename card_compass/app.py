@@ -22,7 +22,7 @@ from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_o
 from .import_ui import ImportsPage
 
 
-from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface
+from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette
 
 
 
@@ -192,6 +192,7 @@ class CustomCard(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, directory: Path | None = None, auto_refresh=True):
         super().__init__()
+        self.setPalette(light_palette())
         self.setWindowTitle("Card Compass")
         self.resize(1380, 900)
         self.setMinimumSize(1040, 720)
@@ -727,7 +728,7 @@ class MainWindow(QMainWindow):
                     font.setPixelSize(17)
                     font.setWeight(QFont.Weight.DemiBold)
                     item.setFont(font)
-                    item.setForeground(QColor('#236347' if (match['ongoing'] if col == 2 else match['first_year']) > 0 else '#829288'))
+                    item.setForeground(QColor('#236347' if (match['ongoing'] if col == 2 else match['first_year']) > 0 else '#52665a'))
                 self.recommendations.setItem(row, col, item)
             self.recommendations.setRowHeight(row, 88)
         self.recommendations.blockSignals(False)
@@ -746,7 +747,7 @@ class MainWindow(QMainWindow):
                 providers = baseline.category_cards.get(cat, [])
                 item.setToolTip(' / '.join('Manual coverage' if i == 'manual' else self.by_id[i]['name'] for i in providers))
                 if col == 3:
-                    item.setForeground(QColor('#a66e27' if state == 'Gap' else '#236347' if state == 'Covered' else '#829288'))
+                    item.setForeground(QColor('#805014' if state == 'Gap' else '#236347' if state == 'Covered' else '#52665a'))
                 self.coverage.setItem(row, col, item)
             self.coverage.setRowHeight(row, 62)
         self.gaps_metric.value.setText(str(gaps))
@@ -1022,6 +1023,7 @@ def main():
     app.setApplicationName("Card Compass")
     app.setOrganizationName("CardCompass")
     app.setStyle("Fusion")
+    app.setPalette(light_palette())
     families = set(QFontDatabase.families())
     family = next((name for name in ("Inter", "SF Pro Text", "Segoe UI", "DejaVu Sans") if name in families), app.font().family())
     app.setFont(QFont(family, 10))
