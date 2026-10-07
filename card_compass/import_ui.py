@@ -526,6 +526,9 @@ class ImportsPage(QWidget):
             for col, value in enumerate(values):
                 self.accounts.setItem(index, col, QTableWidgetItem(value))
         self.status.setText('Double-click a purchase for a one-time override, or a saved merchant to change its default. Payments and interest do not count as spending.')
+        breakdown = getattr(self.owner, 'breakdown_page', None)
+        if breakdown:
+            breakdown.reload()
 
     def import_statement(self):
         cards = [card for card in self.owner.cards if card['id'] in self.owner.profile['wallet']]

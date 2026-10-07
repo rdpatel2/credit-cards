@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from .catalog import CatalogStore, data_dir, load_profile, write_json, read_json, SOURCE
 from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_offers, point_value, rules_for
 from .import_ui import ImportsPage
+from .breakdown_ui import BreakdownPage
 from .search import matches_card
 from .source_audit import source_kind
 
@@ -259,7 +260,7 @@ class MainWindow(QMainWindow):
         shell.setSpacing(0)
         sidebar = QWidget()
         sidebar.setObjectName('sidebar')
-        sidebar.setFixedWidth(220)
+        sidebar.setMinimumWidth(200)
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(16, 28, 16, 24)
         side.setSpacing(8)
@@ -278,7 +279,8 @@ class MainWindow(QMainWindow):
         side.addSpacing(8)
         self.navigation = {}
         for key, caption, glyph in [('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
-                                    ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'), ('coverage', 'Coverage', 'coverage'),
+                                    ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'),
+                                    ('breakdown', 'Breakdown', 'spending'), ('coverage', 'Coverage', 'coverage'),
                                     ('explore', 'Explore cards', 'explore')]:
             button = QPushButton(caption)
             button.setObjectName('nav')
@@ -316,7 +318,12 @@ class MainWindow(QMainWindow):
         side.addSpacing(18)
         side.addWidget(text('LOCAL PROFILE', 'navSection'))
         side.addWidget(text('Saved on this device', 'sideStatus'))
-        shell.addWidget(sidebar)
+        side_scroll = QScrollArea()
+        side_scroll.setFixedWidth(220)
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side_scroll.setWidget(sidebar)
+        shell.addWidget(side_scroll)
 
         workspace = QWidget()
         workspace_layout = QVBoxLayout(workspace)
@@ -600,6 +607,8 @@ class MainWindow(QMainWindow):
         preferences.addStretch()
         self.imports_page = ImportsPage(self)
         self.page_indexes['imports'] = self.pages.addWidget(self.imports_page)
+        self.breakdown_page = BreakdownPage(self)
+        self.page_indexes['breakdown'] = self.pages.addWidget(self.breakdown_page)
         self.build_details()
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -671,6 +680,7 @@ class MainWindow(QMainWindow):
             'wallet': ('Your wallet.', 'The cards you have. The benefits you should know.'),
             'spending': ('Make your spending count.', 'A little context goes a long way toward a better match.'),
             'imports': ('Teach your wallet once.', 'Import statements, remember merchants, and build your purchase history.'),
+            'breakdown': ('Where your money goes.', 'Your largest spending categories and merchants, based on imported purchases.'),
             'coverage': ('Find the gaps.', 'See where your wallet works hard — and where it could do more.'),
             'explore': ('A world of better rewards.', 'Browse cards, compare benefits, and build your wallet.'),
             'preferences': ('Your rules. Your rewards.', 'Fine-tune the assumptions behind your recommendations.'),
@@ -683,6 +693,8 @@ class MainWindow(QMainWindow):
         self.tune_button.setVisible(key == 'matches')
         if key == 'explore':
             self.search.setFocus()
+        if key == 'breakdown':
+            self.breakdown_page.reload()
 
     def add_spend_row(self, category):
         row = self.spending.rowCount()
