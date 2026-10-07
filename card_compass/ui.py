@@ -1,8 +1,8 @@
 """Desktop presentation primitives: scalable card artwork and a shared theme."""
 import hashlib
 
-from PySide6.QtCore import Qt, QRectF, QSize, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap, QPalette
+from PySide6.QtCore import Qt, QRectF, QSize, Signal, QPointF
+from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap, QPalette, QPixmapCache
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget, QComboBox, QDoubleSpinBox, QDateEdit, QCompleter
 
@@ -210,12 +210,21 @@ class Metric(QFrame):
 
 
 def paint_artwork(painter, rect, pixmap):
-    """Fit without cropping or stretching; retain transparent source backgrounds."""
-    scale = min(rect.width() / pixmap.width(), rect.height() / pixmap.height())
-    width, height = pixmap.width() * scale, pixmap.height() * scale
-    target = QRectF(rect.center().x() - width / 2, rect.center().y() - height / 2, width, height)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+    """Area-resample to physical pixels once, then draw on aligned pixel boundaries."""
+    dpr = painter.device().devicePixelRatioF()
+    width, height = max(1, round(rect.width() * dpr)), max(1, round(rect.height() * dpr))
+    key = f'card-art:{pixmap.cacheKey()}:{width}:{height}:{dpr}'
+    thumbnail = QPixmapCache.find(key)
+    if thumbnail is None:
+        thumbnail = pixmap.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation)
+        thumbnail.setDevicePixelRatio(dpr)
+        QPixmapCache.insert(key, thumbnail)
+    x = round(rect.center().x() * dpr - thumbnail.width() / 2) / dpr
+    y = round(rect.center().y() * dpr - thumbnail.height() / 2) / dpr
+    # Resampling at paint time undersamples small logos and text. This pixmap
+    # already matches the display's pixel density, including fractional scaling.
+    painter.drawPixmap(QPointF(x, y), thumbnail)
 
 
 class CardArt(QWidget):
@@ -311,7 +320,7 @@ class CardDelegate(QStyledItemDelegate):
             p.fillRect(rect, background)
             p.setPen(QPen(QColor('#edf1ee'), 1))
             p.drawLine(rect.bottomLeft(), rect.bottomRight())
-        art = QRectF(rect.left() + 18, rect.center().y() - 27, 84, 54)
+        art = QRectF(rect.left() + 18, rect.center().y() - 40, 128, 80)
         font = QFont(option.font)
         pixmap = self.artwork.pixmap(card) if self.artwork is not None else None
         if pixmap is not None:

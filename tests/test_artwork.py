@@ -194,3 +194,49 @@ def test_concurrency_is_bounded_and_close_cancels_queue(app, tmp_path):
 def test_decode_rejects_oversized_dimensions_and_supports_webp(app):
     assert decode_artwork(image_bytes(width=4001, height=1001)) is None
     assert decode_artwork(image_bytes(format='WEBP')) is not None
+
+
+@pytest.mark.parametrize('dpr', [1, 1.25, 1.5, 2, 3])
+def test_thumbnail_resampling_preserves_fine_detail_at_display_scale(app, dpr):
+    from PySide6.QtGui import QPixmap, QPainter
+    from PySide6.QtCore import QRectF
+    from card_compass.ui import paint_artwork
+    # Thin white strokes cover one third of this source. Undersampling can
+    # erase them completely when the image is reduced to a list thumbnail.
+    source = QImage(480, 300, QImage.Format.Format_RGB32)
+    painter = QPainter(source)
+    painter.fillRect(source.rect(), QColor('black'))
+    painter.setPen(QColor('white'))
+    for x in range(2, 480, 3):
+        painter.drawLine(x, 0, x, 299)
+    painter.end()
+    output = QImage(round(160 * dpr), round(100 * dpr), QImage.Format.Format_RGB32)
+    output.setDevicePixelRatio(dpr)
+    output.fill(QColor('red'))
+    painter = QPainter(output)
+    paint_artwork(painter, QRectF(0, 0, 160, 100), QPixmap.fromImage(source))
+    painter.end()
+    average = sum(output.pixelColor(x, output.height() // 2).red() for x in range(output.width())) / output.width()
+    assert average == pytest.approx(85, abs=2)
+
+
+def test_thumbnail_repaint_uses_updated_source_and_preserves_transparency(app):
+    from PySide6.QtGui import QPixmap, QPainter
+    from PySide6.QtCore import QRectF
+    from card_compass.ui import paint_artwork
+    colors = []
+    for color in ('#cc3322', '#2266bb'):
+        source = QImage(400, 250, QImage.Format.Format_ARGB32)
+        source.fill(QColor(color))
+        painter = QPainter(source)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(0, 0, 40, 40, QColor(0, 0, 0, 0))
+        painter.end()
+        output = QImage(128, 80, QImage.Format.Format_ARGB32)
+        output.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(output)
+        paint_artwork(painter, QRectF(0, 0, 128, 80), QPixmap.fromImage(source))
+        painter.end()
+        assert output.pixelColor(1, 1).alpha() == 0
+        colors.append(output.pixelColor(64, 40).name())
+    assert colors == ['#cc3322', '#2266bb']
