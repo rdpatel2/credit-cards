@@ -8,6 +8,7 @@ A native desktop app for choosing your next US credit card. Runs on Windows, mac
 - Add your existing cards to a saved wallet, including manually entered cards.
 - Enter monthly spending; Coverage puts your highest spending categories first.
 - Import CSV statement exports or BOFA/Amex PDFs, categorize each new merchant once, and reuse your saved choices on later imports.
+- See your biggest spending categories and merchants in **Breakdown**, with month/card filters, refunds, and monthly trends.
 - Infer coverage from your wallet, or override a category's cash-equivalent rate. Set **0%** for an uncovered category and **Auto** to derive it from cards.
 - Compare **additional** annual rewards against your existing wallet, after the new card's fee. Recurring and first-year estimates are separate.
 - Refresh the public catalog in the background on every startup. Offline starts use the last successful cache, then the bundled snapshot.
@@ -76,6 +77,16 @@ CSV imports work with any wallet card when its export can be mapped to the requi
 Re-importing the same CSV reuses merchant rules and duplicate checks. PDF and CSV exports may use different descriptions, posting dates, references, or account endings, so duplicate detection across formats is not guaranteed. Review overlapping imports before saving, and remove an earlier import before replacing it with corrected column/sign settings. CSVs without account endings use the selected wallet card as the account identity.
 
 PDFs and CSVs are read locally and are not retained by the app. Extracted transactions, account endings, import metadata, and merchant choices are saved locally in `transactions.sqlite3`.
+
+## Spending breakdown
+
+Open **Breakdown** in the sidebar after importing statements. It shows purchases, refunds, and net spending, with charts for the largest categories and merchants. Tabs list all categories, merchants, cards, and calendar months. Choose a month or card to narrow the results.
+
+Rankings use net spending (purchases minus refunds). The Share column shows the portion of purchases before refunds, so refunds do not create misleading percentages. Payments, fees, interest, transfers, and reward credits are excluded. Uncategorized purchases remain included. Saved merchant aliases group repeat descriptions; individual transaction category overrides remain respected.
+
+These are actual totals from imported transactions, grouped by transaction date, rather than the statement-period averages used for recommendations. Missing months are not estimated and manual spending inputs are not included. The page updates after imports, category/history edits, account reassignment, or import removal. The database location also appears at the bottom of the page.
+
+[Preview the Breakdown page](docs/breakdown-preview.png) (synthetic sample purchases).
 
 ## Data and calculation limits
 

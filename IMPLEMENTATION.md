@@ -80,3 +80,11 @@ CSV imports support mapped exports from any wallet issuer; PDF layouts remain BO
 2. Regression validation: exercise real mouse selection and Save, verify Dining and Online Shopping coverage, reopen the application and settings to confirm persistence, reject an empty rewards choice, and check same-category reselection. All 91 tests pass. The rebuilt Linux executable passes its catalog, PDF, and CSV smoke checks.
 
 Existing profiles with an empty BOFA category list need an explicit selection after restarting; the app does not guess which issuer category an empty selection means. Select the current issuer category and Save to update Coverage. Shared caps still affect effective coverage rates.
+
+## Imported spending breakdown · `feat/spending-breakdown`
+
+1. Aggregation: integer-cent purchase/refund totals and rankings by category, remembered merchant, card, and transaction month. Resolve merchant aliases while preserving stored transaction categories; exclude payments and other non-spending entries, retain uncategorized purchases and negative refund totals.
+2. Native desktop page: month/card filters, summary metrics, category/merchant bar charts, detailed tables, monthly trends, empty states, the local database path, and refresh after ledger changes. Scroll the page and sidebar at smaller window sizes so added navigation does not increase the minimum window dimensions.
+3. Validation and documentation: all 99 tests pass, including filters, refund-only data, merchant aliases, preserved overrides, category edits, import removal, and the 1040 × 720 window. The layout was inspected at 1380 × 900 and 1040 × 720. The rebuilt Linux executable passes the new Breakdown smoke check alongside existing catalog/PDF/CSV checks.
+
+`docs/breakdown-preview.png` uses synthetic transactions. Breakdown shows actual imported totals, rather than recommendation spending averages. Original statements are not retained or transmitted.

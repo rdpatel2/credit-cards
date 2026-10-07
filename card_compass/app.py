@@ -1121,9 +1121,13 @@ def main():
         csv_rows = ledger.preview(csv_statement, 'smoke-card')
         if csv_rows[0]['category'] != 'groceries' or ledger.commit(csv_statement, 'smoke-card', csv_rows, {}) != 1:
             raise RuntimeError('Packaged CSV parsing or merchant memory unavailable')
+        window.breakdown_page.reload()
+        if window.breakdown_page.report['net_cents'] != 300 or window.breakdown_page.report['count'] != 2:
+            raise RuntimeError('Packaged spending breakdown unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)
+        print('Breakdown smoke test: imported purchases total $3.00', flush=True)
         QTimer.singleShot(100, window.close)
     code = app.exec()
     if temporary:
