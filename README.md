@@ -43,7 +43,7 @@ The installed `card-compass` command also launches the app. Linux requires a des
 ## Use
 
 1. Start in **Dashboard**. Choose Cash back, Points, Miles, Travel, Dining, Groceries, No annual fee, or Business to browse a group, or search for any active card across reward categories. **View all active cards** opens the full list; **Dashboard** above the results returns to the tiles. Select a card and click **Add to wallet**. Use **My wallet → Add manually** for cards missing from browsing.
-2. In **Spending**, enter monthly purchases in separate buckets. **Add a category** includes merchant and travel-portal categories. Move that spending out of other buckets to avoid double counting.
+2. In **Spending**, enter monthly purchases in separate buckets. Click **Monthly Spend** to sort highest first; click again for lowest first. Coverage fields use light red for 1% or below, yellow above 1% and below 3%, and green for 3% or above. Auto shows your effective wallet rate when spending is present; otherwise it remains unresolved. **Add a category** includes merchant and travel-portal categories. Move that spending out of other buckets to avoid double counting.
 3. Use **Coverage** to see gaps against your adjustable target, initially 2%. Manual coverage entries replace inferred wallet coverage for that category.
 4. Compare **Your matches**, which highlights your strongest match and its incremental value. Choose ongoing or first-year sorting, and use **Preferences** to set your maximum annual fee, point values, coverage target, and bonus assumptions.
 5. Adjust point values, selections, and activation in **Card settings**. The default assumption is **1 cent per point/mile across all programs**; change it to your actual redemption values, especially for hotel points.
@@ -77,6 +77,12 @@ Type part of a category name in a category picker to search, then choose a match
 The **Saved merchants** tab lets you change defaults and optionally apply them to past transactions; individual overrides are preserved. **Accounts** lets you correct a linked wallet card. **Imported files** lets you remove an import while retaining merchant choices, then re-import it if needed. Reapply imported spending after changing or removing transactions to update the recommendation inputs.
 
 Monthly spending is calculated separately for each card: category totals divided by the number of distinct imported statement closing months, then added across cards. This is an average of imported statement periods, so import complete statements for the months you want represented. The preview replaces all manual spending buckets after confirmation; coverage settings remain separate.
+
+To keep an unusual purchase, such as a large flight, out of recommendation averages, check **One-off** in import review or **Statements → Transactions**. **Spending → Manage one-off transactions** opens that history table. The setting applies to the individual transaction, persists across restarts, and does not change the merchant's default category. One-off purchases remain in history and Breakdown, and their statement months still count in the averaging denominator. If a one-off purchase is refunded, mark its refund separately.
+
+Choose **Use imported spending** to apply the filtered averages. While those inputs remain based on imports, changing a one-off checkbox automatically updates spending and recommendations. Editing a monthly spending amount switches to manual inputs, which one-off changes preserve; choose **Use imported spending** again to resume imported averages. Category edits and import removal still require reapplying imported spending. Existing databases automatically gain the one-off field without deleting history.
+
+[Preview spending sorting and coverage colors](docs/spending-preview.png) (synthetic values).
 
 The initial parsers support selectable-text BOFA and Amex layouts based on the supplied examples. Tests use synthetic PDFs; other statement layouts may need adjustments. Scanned PDFs require OCR, which is not included, and password-protected PDFs must be unlocked first. BOFA purchase totals are checked when available. Printed Amex merchant categories are displayed as hints; your choices determine the spending categories. Reference numbers do not determine categories, and these categories do not verify issuer bonus eligibility.
 

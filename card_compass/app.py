@@ -1312,6 +1312,15 @@ def main():
         window.breakdown_page.reload()
         if window.breakdown_page.report['net_cents'] != 300 or window.breakdown_page.report['count'] != 2:
             raise RuntimeError('Packaged spending breakdown unavailable')
+        window.imports_page.reload()
+        window.imports_page.set_spending(ledger.monthly_spending()[0])
+        index = next(i for i, row in enumerate(window.imports_page.history) if row['amount_cents'] == 100)
+        window.imports_page.transactions.item(index, 5).setCheckState(Qt.CheckState.Checked)
+        if window.profile['spend'].get('groceries') != 2:
+            raise RuntimeError('Packaged one-off recommendation exclusion failed')
+        window.sort_spending(1)
+        if window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) != 'groceries' or window.coverage_widgets['groceries'].property('coverageBand') != 'low':
+            raise RuntimeError('Packaged spending sort or coverage colors failed')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
         print('Dashboard smoke test: category tiles open active cards; dashboard is the startup page', flush=True)
         print('Artwork smoke test: cached card image decoded for native display', flush=True)
@@ -1319,6 +1328,7 @@ def main():
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         print('CSV smoke test: CSV parsed and saved with remembered merchant category', flush=True)
         print('Breakdown smoke test: imported purchases total $3.00', flush=True)
+        print('Spending smoke test: one-off purchase excluded from averages; sorting and coverage colors work', flush=True)
         QTimer.singleShot(100, window.close)
     code = app.exec()
     if temporary:
