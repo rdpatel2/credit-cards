@@ -145,7 +145,7 @@ class ImportDialog(QDialog):
             QTimer.singleShot(0, self.extract)
 
     def extract(self):
-        if self.cancelled:
+        if self.cancelled or self.worker is not None:
             return
         self.worker = ExtractThread(self.path, self)
         self.worker.result.connect(self.extracted)
@@ -377,9 +377,12 @@ class ImportsPage(QWidget):
         self.accounts = grid(['STATEMENT ACCOUNT', 'LINKED WALLET CARD', 'STATEMENTS'])
         self.accounts.itemDoubleClicked.connect(self.edit_account)
         self.tabs.addTab(self.accounts, 'Accounts')
+        self.imports = grid(['IMPORTED FILE', 'CLOSING DATE', 'SAVED TRANSACTIONS'])
+        self.tabs.addTab(self.imports, 'Imported files')
         layout.addWidget(self.tabs, 1)
         footer = QHBoxLayout()
         edit = QPushButton('Edit selected category')
+        self.tabs.currentChanged.connect(lambda index: edit.setText('Remove selected import' if index == 3 else 'Change linked card' if index == 2 else 'Edit selected category'))
         edit.clicked.connect(self.edit_selected)
         footer.addWidget(edit)
         footer.addStretch()
@@ -401,6 +404,7 @@ class ImportsPage(QWidget):
         self.history = self.ledger.transactions()
         self.saved_rules = self.ledger.rules()
         self.saved_accounts = self.ledger.accounts()
+        self.saved_imports = self.ledger.imports()
         self.transactions.setRowCount(len(self.history))
         for index, row in enumerate(self.history):
             card = getattr(self.owner, 'by_id', {}).get(row['card_id'], {})
@@ -417,6 +421,10 @@ class ImportsPage(QWidget):
             for col, value in enumerate(values):
                 self.merchants.setItem(index, col, QTableWidgetItem(value))
         self.summary.setText(f'{len(self.history)} transactions · {len(self.saved_rules)} remembered merchants')
+        self.imports.setRowCount(len(self.saved_imports))
+        for index, imported in enumerate(self.saved_imports):
+            for col, value in enumerate([imported['filename'], imported['closing_date'], str(imported['transaction_count'])]):
+                self.imports.setItem(index, col, QTableWidgetItem(value))
         self.accounts.setRowCount(len(self.saved_accounts))
         for index, account in enumerate(self.saved_accounts):
             card = getattr(self.owner, 'by_id', {}).get(account['card_id'], {})
@@ -475,8 +483,22 @@ class ImportsPage(QWidget):
             self.edit_transaction()
         elif self.tabs.currentIndex() == 1:
             self.edit_rule()
-        else:
+        elif self.tabs.currentIndex() == 2:
             self.edit_account()
+        else:
+            self.remove_import()
+
+    def remove_import(self):
+        index = self.imports.currentRow()
+        if index < 0:
+            return
+        imported = self.saved_imports[index]
+        result = QMessageBox.question(self, 'Remove this import?',
+            'Remove the transactions originally saved from this file? Saved merchant categories and account links will remain. You can import the PDF again. Spending inputs stay as they are until you choose Use imported spending.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if result == QMessageBox.StandardButton.Yes:
+            self.ledger.remove_import(imported['id'])
+            self.reload()
 
     def edit_account(self, *args):
         index = self.accounts.currentRow()

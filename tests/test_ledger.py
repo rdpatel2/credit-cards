@@ -117,3 +117,17 @@ def test_account_link_can_be_corrected_without_losing_history(tmp_path):
     assert ledger.remembered_card(statement) == 'correct-card'
     assert all(row['card_id'] == 'correct-card' for row in ledger.transactions())
     assert len(ledger.transactions()) == 13
+
+
+def test_import_can_be_removed_and_reimported_with_merchant_memory(tmp_path):
+    ledger = Ledger(tmp_path)
+    statement = parse_statement_text(BOFA)
+    rows = ledger.preview(statement, 'card')
+    ledger.commit(statement, 'card', rows, choices(rows))
+    saved = ledger.imports()[0]
+    ledger.remove_import(saved['id'])
+    assert ledger.transactions() == []
+    assert ledger.monthly_spending() == ({}, {})
+    rows = ledger.preview(statement, 'card')
+    assert all(not r['duplicate'] for r in rows)
+    assert all(r['category'] for r in rows if r['kind'] == 'purchase')

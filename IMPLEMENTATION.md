@@ -37,3 +37,13 @@ Replace the dense three-column screen with a sidebar and dedicated task pages. G
 Validate navigation, automatic saving, reopening detail windows with the keyboard, issuer filtering, and the layout at 1040 × 720. Rebuild the Linux distributable so the packaged app includes the redesign; Windows/macOS checks remain in the configured platform workflow.
 
 Redesign validation: 27 tests pass, the layout was inspected at 1380 × 900 and 1040 × 720, and the rebuilt Linux executable passes the packaged smoke test. `docs/gui-preview.png` shows sample data in the redesigned workspace.
+
+## Statement imports · `feat/statement-imports`
+
+1. PDF parsing and storage: BOFA and Amex selectable-text extraction, integer-cent transactions, date and total checks, local SQLite ledger, duplicate detection, merchant aliases, and global/issuer/card category rules.
+2. Native desktop workflow: Statements page, background PDF reading, first-time merchant categorization, purchase review and individual overrides, saved-merchant editing, and optional imported-spending preview.
+3. Validation and documentation: closing-date and wallet-card guards, safe cancellation during extraction, account reassignment, import removal, parser edge cases, workflow tests, usage instructions, and packaged PDF smoke coverage.
+
+Validation: 58 tests pass, including generated BOFA/Amex PDFs, merchant memory, duplicate occurrences, refunds, rule scopes, historical edits, atomic rollback, and native UI import/cancellation workflows. The Linux executable's smoke test exercises PDF parsing, SQLite persistence, remembered categories, and duplicate detection alongside the catalog and solver. Windows/macOS runtime checks remain pending the configured platform jobs.
+
+No original PDFs are retained or transmitted. Initial layout support is based on the supplied statement text and synthetic fixtures; scanned PDFs/OCR and CSV imports are outside this feature.

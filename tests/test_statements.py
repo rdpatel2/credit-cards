@@ -63,6 +63,7 @@ def test_normalization_remembers_branches_without_assigning_categories():
     assert merchant_key('AplPay FOOD LION #1573 RALEIGH NC') == 'FOOD LION'
     assert merchant_key('TST*TAQUERIA BY KATSUJI Durham NC').startswith('TAQUERIA')
     assert merchant_key('UNFAMILIAR CAFE RALEIGH NC') != merchant_key('UNRELATED CAFE RALEIGH NC')
+    assert merchant_key('STUDIO 123 RALEIGH NC') != merchant_key('STUDIO 456 RALEIGH NC')
 
 
 def test_pdf_geometry_preserves_right_hand_amounts(tmp_path):
@@ -99,3 +100,16 @@ def test_amex_refund_formats(formatted):
     assert statement.transactions[0].amount_cents == -2000
     assert statement.transactions[0].kind == 'refund'
     assert statement.transactions[0].description == 'SHOP EXAMPLE'
+
+
+def test_bofa_generated_pdf_preserves_rows_and_total(tmp_path):
+    path = tmp_path / 'bofa.pdf'
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=1100, height=1200)
+        for index, line in enumerate(BOFA.splitlines()):
+            page.insert_text((30, 30 + index * 18), line, fontsize=10)
+        doc.save(path)
+    result = parse_pdf(path)
+    assert result.purchases_cents == 19197
+    assert len(result.transactions) == 13
+    assert not result.warnings

@@ -56,6 +56,7 @@ def merchant_key(description):
     value = re.sub(r'^(?:APLPAY\s+|APPLE\s+PAY\s+|TST\s*\*\s*|SQ\s*\*\s*|SQUARE\s*\*\s*)', '', value)
     value = re.sub(r'\b(?:\+?1[- .]?)?\d{3}[- .]\d{3}[- .]\d{4}\b', '', value)
     value = re.sub(r'\b[\w.-]+\.(?:COM|NET|ORG)(?:/\S*)?', '', value)
+    value = re.sub(r'#\s*\d{3,}\b', ' ', value)
     value = re.sub(r'[^A-Z0-9 ]', ' ', value)
     value = ' '.join(value.split())
     # Identity normalization only: these never assign a spending category.
@@ -69,7 +70,6 @@ def merchant_key(description):
             return name
     # Avoid broad fuzzy matching: ambiguous merchants stay separate until linked.
     value = re.sub(r'\s+' + STATES + r'$', '', value)
-    value = re.sub(r'\s+\d{3,}\b', '', value)
     return ' '.join(value.split()) or 'UNKNOWN MERCHANT'
 
 

@@ -7,6 +7,7 @@ A native desktop app for choosing your next US credit card. Runs on Windows, mac
 - Search cards, benefits, earning categories, annual fees, and published signup offers.
 - Add your existing cards to a saved wallet, including manually entered cards.
 - Enter monthly spending; Coverage puts your highest spending categories first.
+- Import BOFA or Amex statement PDFs, categorize each new merchant once, and reuse your saved choices on later imports.
 - Infer coverage from your wallet, or override a category's cash-equivalent rate. Set **0%** for an uncovered category and **Auto** to derive it from cards.
 - Compare **additional** annual rewards against your existing wallet, after the new card's fee. Recurring and first-year estimates are separate.
 - Refresh the public catalog in the background on every startup. Offline starts use the last successful cache, then the bundled snapshot.
@@ -49,6 +50,24 @@ The installed `card-compass` command also launches the app. Linux requires a des
 
 The desktop workspace uses dedicated screens for matches, wallet, spending, coverage, catalog browsing, and preferences. Card details open in a separate window with Overview, Offers, Benefits, and Sources tabs. Click a card or press Enter to open its details; Escape closes the detail window. The interface supports a minimum window size of 1040 × 720, with scrollable settings and spending screens. Card illustrations and navigation icons are drawn as scalable vectors; illustrations are identifiers rather than official issuer artwork.
 
+## Import statements
+
+1. Add your cards to **My wallet**, then open **Statements → Import statement PDF**.
+2. Select the matching wallet card and verify the statement closing date. If the date needs correction, click **Read dates again** before reviewing.
+3. In **New merchants**, choose a category for each unfamiliar merchant. Repeated purchases are grouped together. You can link a description to an existing merchant and remember the category across all cards, for this issuer, or for this card only.
+4. Review the purchases, exclusions, and parsing warnings. A purchase's category can be overridden without changing the merchant's default. Confirm the review and save.
+5. Optionally choose **Use imported spending** to preview and replace your monthly spending inputs. Saving a statement alone does not replace them.
+
+Later imports reuse saved merchant choices. Re-imported transactions are skipped by default; explicitly include a flagged duplicate only if it represents another purchase. Identical purchases within one statement retain their separate occurrences. Payments, interest, fees, and reward credits are excluded from spending; merchant refunds reduce their category totals.
+
+The **Saved merchants** tab lets you change defaults and optionally apply them to past transactions; individual overrides are preserved. **Accounts** lets you correct a linked wallet card. **Imported files** lets you remove an import while retaining merchant choices, then re-import it if needed. Reapply imported spending after changing or removing transactions to update the recommendation inputs.
+
+Monthly spending is calculated separately for each card: category totals divided by the number of distinct imported statement closing months, then added across cards. This is an average of imported statement periods, so import complete statements for the months you want represented. The preview replaces all manual spending buckets after confirmation; coverage settings remain separate.
+
+The initial parsers support selectable-text BOFA and Amex layouts based on the supplied examples. Tests use synthetic PDFs; other statement layouts may need adjustments. Scanned PDFs require OCR, which is not included, and password-protected PDFs must be unlocked first. BOFA purchase totals are checked when available. Printed Amex merchant categories are displayed as hints; your choices determine the spending categories. Reference numbers do not determine categories, and these categories do not verify issuer bonus eligibility.
+
+PDFs are read locally and are not retained by the app. Extracted transactions, account endings, import metadata, and merchant choices are saved locally in `transactions.sqlite3`.
+
 ## Data and calculation limits
 
 Catalog data comes from [fuermosi777/rewards](https://github.com/fuermosi777/rewards), a public community-maintained database with issuer source links and review dates. The app downloads card and bonus JSON; it does not scrape or independently verify issuer pages. A fresh download may contain old reviews. Check the issuer links before applying. The bundled snapshot's download timestamp is stored in `card_compass/data/snapshot.json`.
@@ -67,7 +86,7 @@ Your wallet and spending stay on your device. Refresh requests send no profile i
 | macOS | `~/Library/Application Support/CardCompass` |
 | Linux | `$XDG_DATA_HOME/CardCompass` or `~/.local/share/CardCompass` |
 
-`profile.json` holds preferences, wallet and spending; `catalog.json` holds the last complete download. Failed refreshes preserve the old catalog. A close during refresh cancels pending requests and waits for in-flight requests to finish (up to their network timeout). Custom cards are preserved across catalog refreshes.
+`profile.json` holds preferences, wallet and spending; `catalog.json` holds the last complete download; `transactions.sqlite3` holds imported statement data and merchant choices. Failed refreshes preserve the old catalog. A close during refresh cancels pending requests and waits for in-flight requests to finish (up to their network timeout). Custom cards are preserved across catalog refreshes.
 
 ## Test and build
 
@@ -88,3 +107,5 @@ Distributables are in `dist/`. Build on each target operating system: PyInstalle
 See [IMPLEMENTATION.md](IMPLEMENTATION.md). The branches form a stack: `feat/catalog` → `feat/recommendations` → `feat/desktop` → `chore/release`. Each branch retains its completed milestone. `main` is advanced to the fully verified result after the release step. No remote push is required to run locally.
 
 The desktop redesign is on `feat/gui-redesign`, with separate commits for the visual components, task-based workspace and workflow tests, and documentation/preview. The completed redesign is integrated into `main`.
+
+Statement imports are on `feat/statement-imports`, with separate commits for PDF parsing and storage, native review and merchant mapping, and validation/documentation. The completed feature is integrated into `main`.

@@ -1036,7 +1036,24 @@ def main():
         window.recalculate()
         if not window.cards or not window.matches:
             raise RuntimeError("Packaged catalog or recommendation engine unavailable")
+        import pymupdf
+        from .statements import parse_pdf
+        pdf_path = Path(temporary.name) / 'smoke.pdf'
+        with pymupdf.open() as document:
+            page = document.new_page()
+            page.insert_text((30, 40), 'American Express Closing Date 09/21/26', fontsize=10)
+            page.insert_text((30, 60), 'Account Ending 1-00000', fontsize=10)
+            page.insert_text((30, 90), '09/06/26 FOOD LION #0001 EXAMPLE NC $1.00', fontsize=10)
+            document.save(pdf_path)
+        statement = parse_pdf(pdf_path)
+        ledger = window.imports_page.ledger
+        rows = ledger.preview(statement, 'smoke-card')
+        count = ledger.commit(statement, 'smoke-card', rows, {'FOOD LION': {'name': 'Food Lion', 'category': 'groceries'}})
+        remembered = ledger.preview(statement, 'smoke-card')[0]
+        if count != 1 or not remembered['duplicate'] or remembered['category'] != 'groceries':
+            raise RuntimeError('Packaged PDF extraction, merchant memory, or duplicate checks unavailable')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
+        print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)
         QTimer.singleShot(100, window.close)
     code = app.exec()
     if temporary:

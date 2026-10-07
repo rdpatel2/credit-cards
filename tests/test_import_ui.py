@@ -2,7 +2,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QEventLoop, QTimer
 
 from card_compass.app import MainWindow
 from card_compass.import_ui import ImportDialog
@@ -111,3 +111,49 @@ def test_spending_application_updates_recommendations_and_profile(owner):
     assert owner.profile['spend']['groceries'] == 111.14
     assert owner.profile['spend']['dining'] == 0
     assert owner.matches
+
+
+def test_actual_pdf_is_extracted_in_background(owner, tmp_path, app):
+    import pymupdf
+    path = tmp_path / 'statement.pdf'
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((30, 40), 'American Express Closing Date 09/21/26', fontsize=10)
+        page.insert_text((30, 60), 'Account Ending 1-00002', fontsize=10)
+        page.insert_text((30, 90), '09/06/26 FOOD LION #1573 RALEIGH NC $34.39', fontsize=10)
+        document.save(path)
+    cards = [owner.by_id[c] for c in owner.profile['wallet']]
+    review = ImportDialog(path, owner.imports_page.ledger, cards, owner.imports_page.categories(), owner)
+    review.extract()
+    loop = QEventLoop()
+    review.worker.finished.connect(loop.quit)
+    QTimer.singleShot(5000, loop.quit)
+    loop.exec()
+    app.processEvents()
+    assert review.statement.purchases_cents == 3439
+    review.card.setCurrentIndex(2)
+    assert set(review.merchant_widgets) == {'FOOD LION'}
+    review.reject()
+
+
+def test_cancellation_waits_for_extraction_without_saving(owner, monkeypatch, app):
+    import threading
+    started, release = threading.Event(), threading.Event()
+    def delayed(path):
+        started.set()
+        release.wait(2)
+        return AMEX
+    monkeypatch.setattr('card_compass.import_ui.extract_pdf_text', delayed)
+    cards = [owner.by_id[c] for c in owner.profile['wallet']]
+    review = ImportDialog('/unused.pdf', owner.imports_page.ledger, cards, owner.imports_page.categories(), owner)
+    review.extract()
+    assert started.wait(1)
+    review.reject()
+    release.set()
+    loop = QEventLoop()
+    review.worker.finished.connect(loop.quit)
+    QTimer.singleShot(5000, loop.quit)
+    loop.exec()
+    app.processEvents()
+    assert review.cancelled
+    assert owner.imports_page.ledger.transactions() == []

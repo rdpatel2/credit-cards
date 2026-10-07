@@ -177,6 +177,16 @@ class Ledger:
         with self.connection() as db:
             db.execute('UPDATE accounts SET card_id=? WHERE account_key=?', (card_id, key))
 
+    def imports(self):
+        with self.connection() as db:
+            return [dict(row) for row in db.execute('''SELECT s.*,COUNT(t.id) AS transaction_count
+                FROM statements s LEFT JOIN transactions t ON t.statement_id=s.id GROUP BY s.id ORDER BY s.id DESC''')]
+
+    def remove_import(self, ident):
+        with self.connection() as db:
+            db.execute('DELETE FROM transactions WHERE statement_id=?', (ident,))
+            db.execute('DELETE FROM statements WHERE id=?', (ident,))
+
     def update_rule(self, scope, key, category, apply_history=False):
         with self.connection() as db:
             db.execute('UPDATE rules SET category=? WHERE scope=? AND merchant_key=?', (category, scope, key))
