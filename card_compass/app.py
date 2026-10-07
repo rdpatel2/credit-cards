@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .catalog import CatalogStore, data_dir, load_profile, write_json, SOURCE
 from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_offers, point_value, rules_for
+from .import_ui import ImportsPage
 
 
 from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface
@@ -237,7 +238,7 @@ class MainWindow(QMainWindow):
         side.addSpacing(8)
         self.navigation = {}
         for key, caption, glyph in [('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
-                                    ('spending', 'Spending', 'spending'), ('coverage', 'Coverage', 'coverage'),
+                                    ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'), ('coverage', 'Coverage', 'coverage'),
                                     ('explore', 'Explore cards', 'explore')]:
             button = QPushButton(caption)
             button.setObjectName('nav')
@@ -557,6 +558,8 @@ class MainWindow(QMainWindow):
         explanation_layout.addWidget(text('Card data refreshes on startup. Download time and issuer review dates are different; check the published source before applying.', 'muted', True))
         preferences.addWidget(explanation)
         preferences.addStretch()
+        self.imports_page = ImportsPage(self)
+        self.page_indexes['imports'] = self.pages.addWidget(self.imports_page)
         self.build_details()
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -627,6 +630,7 @@ class MainWindow(QMainWindow):
             'matches': ('Your next great card.', 'More rewards for the way you already spend.'),
             'wallet': ('Your wallet.', 'The cards you have. The benefits you should know.'),
             'spending': ('Make your spending count.', 'A little context goes a long way toward a better match.'),
+            'imports': ('Teach your wallet once.', 'Import statements, remember merchants, and build your purchase history.'),
             'coverage': ('Find the gaps.', 'See where your wallet works hard — and where it could do more.'),
             'explore': ('A world of better rewards.', 'Browse cards, compare benefits, and build your wallet.'),
             'preferences': ('Your rules. Your rewards.', 'Fine-tune the assumptions behind your recommendations.'),
@@ -698,6 +702,7 @@ class MainWindow(QMainWindow):
         self.issuer_filter.setCurrentIndex(max(0, index))
         self.issuer_filter.blockSignals(False)
         self.filter_catalog()
+        self.imports_page.reload()
 
     def recalculate(self):
         self.save_profile()

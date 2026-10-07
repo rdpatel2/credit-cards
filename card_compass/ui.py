@@ -37,6 +37,7 @@ QPushButton:hover { background: #eef4ef; border-color: #b5cbbb; }
 QPushButton:pressed { background: #dceadf; }
 QPushButton#primary { background: #236347; color: #ffffff; border: 1px solid #236347; }
 QPushButton#primary:hover { background: #194f38; }
+QPushButton#primary:disabled { background: #dce6df; color: #718b7a; border-color: #dce6df; }
 QPushButton#quiet { background: transparent; border: none; color: #236347; padding: 8px; }
 QPushButton:disabled { color: #84978a; background: #edf1ee; border-color: #edf1ee; }
 QPushButton:focus, QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 1px solid #398161; }
@@ -76,6 +77,7 @@ ICONS = {
     "matches": '<path d="m12 3 2.4 5.9 6.4.5-4.9 4.1 1.5 6.2-5.4-3.4-5.4 3.4 1.5-6.2-4.9-4.1 6.4-.5z"/>',
     "wallet": '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M21 10h-6v5h6M3 8h17"/><path d="M17 12.5h.1"/>',
     "spending": '<path d="M4 20h16M6 16v-5M12 16V4M18 16V8"/>',
+    "statement": '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
     "coverage": '<path d="m12 3 8 3v5c0 5-8 10-8 10S4 16 4 11V6zM8 12l3 3 5-6"/>',
     "explore": '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
     "settings": '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor"/><circle cx="15" cy="17" r="3" fill="currentColor"/>',
