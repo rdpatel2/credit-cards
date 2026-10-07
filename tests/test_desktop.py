@@ -158,6 +158,51 @@ def test_cached_card_artwork_renders_in_details_and_list(window, app):
     assert window.artwork is window.recommendations.itemDelegateForColumn(0).artwork
 
 
+def test_monthly_spend_header_sorts_numerically_and_preserves_editors(window, app):
+    window.navigate('spending')
+    window.show()
+    window.spend_widgets['dining'].setValue(100)
+    window.spend_widgets['groceries'].setValue(900)
+    window.spend_widgets['airfare'].setValue(20)
+    window.recalculate()
+    header = window.spending.horizontalHeader()
+    from PySide6.QtCore import QPoint
+    position = QPoint(header.sectionViewportPosition(1) + 30, header.height() // 2)
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=position)
+    ordered = [window.spending.cellWidget(row, 1).value() for row in range(window.spending.rowCount())]
+    assert ordered == sorted(ordered, reverse=True)
+    assert window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) == 'groceries'
+    window.spend_widgets['airfare'].setValue(1200)
+    window.recalculate()
+    assert window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) == 'airfare'
+    for row in range(window.spending.rowCount()):
+        category = window.spending.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        assert window.spending.cellWidget(row, 1) is window.spend_widgets[category]
+        assert window.spending.cellWidget(row, 2) is window.coverage_widgets[category]
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=position)
+    ordered = [window.spending.cellWidget(row, 1).value() for row in range(window.spending.rowCount())]
+    assert ordered == sorted(ordered)
+    saved = read_json(window.directory / 'profile.json')
+    assert saved['spend']['airfare'] == 1200 and saved['spend']['groceries'] == 900
+
+
+def test_spending_coverage_colors_match_boundaries_and_auto_rates(window):
+    for value, band in [(0, 'low'), (1, 'low'), (1.01, 'medium'), (2.99, 'medium'), (3, 'high'), (5, 'high')]:
+        window.coverage_widgets['dining'].setValue(value)
+        window.recalculate()
+        assert window.coverage_widgets['dining'].property('coverageBand') == band
+    window.profile['wallet'] = ['chase-freedom-unlimited']
+    window.reload_cards()
+    window.spend_widgets['everything_else'].setValue(200)
+    window.coverage_widgets['everything_else'].setValue(-1)
+    window.recalculate()
+    widget = window.coverage_widgets['everything_else']
+    assert widget.property('coverageBand') == 'medium'
+    assert '1.50%' in widget.text()
+    window.manage_one_off.click()
+    assert window.active_page == 'imports' and window.imports_page.tabs.currentIndex() == 0
+
+
 def test_refresh_failure_is_async_and_preserves_wallet(window, app):
     c = window.by_id["chase-freedom-unlimited"]
     window.show_card(c)

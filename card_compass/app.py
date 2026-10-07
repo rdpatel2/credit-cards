@@ -495,6 +495,10 @@ class MainWindow(QMainWindow):
         intro.addWidget(self.spend_total)
         spending_layout.addWidget(spend_intro)
         self.spending = table(['SPENDING CATEGORY', 'MONTHLY SPEND', 'CURRENT COVERAGE'])
+        self.spending_sort_order = None
+        self.spending.horizontalHeader().setSectionsClickable(True)
+        self.spending.horizontalHeader().sectionClicked.connect(self.sort_spending)
+        self.spending.horizontalHeaderItem(1).setToolTip('Click to sort monthly spending, highest or lowest first.')
         self.spending.setColumnWidth(1, 230)
         self.spending.setColumnWidth(2, 230)
         self.spend_widgets = {}
@@ -505,8 +509,12 @@ class MainWindow(QMainWindow):
             self.add_spend_row(category)
         self.spending.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         spending_layout.addWidget(self.spending, 1)
+        spending_layout.addWidget(text('Coverage: 1% or below is red · above 1% and below 3% is yellow · 3% or above is green. Auto needs spending to calculate a rate.', 'muted', True))
         spending_footer = QHBoxLayout()
         spending_footer.addWidget(text('Changes save automatically. Move portal and merchant purchases out of other buckets.', 'muted', True), 1)
+        self.manage_one_off = QPushButton('Manage one-off transactions')
+        self.manage_one_off.clicked.connect(self.manage_one_off_transactions)
+        spending_footer.addWidget(self.manage_one_off)
         add_category = QPushButton('Add a category')
         add_category.setIcon(icon('plus', '#236347', 16))
         add_category.clicked.connect(self.add_category)
@@ -756,19 +764,66 @@ class MainWindow(QMainWindow):
     def add_spend_row(self, category):
         row = self.spending.rowCount()
         self.spending.insertRow(row)
-        self.spending.setItem(row, 0, QTableWidgetItem(label(category)))
+        category_item = QTableWidgetItem(label(category))
+        category_item.setData(Qt.ItemDataRole.UserRole, category)
+        self.spending.setItem(row, 0, category_item)
         amount = spin(self.profile.get("spend", {}).get(category, 0), prefix="$ ")
         covered = spin(0, 100, suffix=" %")
         covered.setRange(-1, 100)
         covered.setSpecialValueText("Auto")
         covered.setValue(self.profile.get("coverage", {}).get(category, -1))
-        amount.valueChanged.connect(self.schedule_update)
+        amount.valueChanged.connect(self.manual_spending_changed)
         covered.valueChanged.connect(self.schedule_update)
         self.spending.setCellWidget(row, 1, amount)
+        monthly_item = QTableWidgetItem()
+        monthly_item.setData(Qt.ItemDataRole.DisplayRole, amount.value())
+        self.spending.setItem(row, 1, monthly_item)
         self.spending.setCellWidget(row, 2, covered)
         self.spend_widgets[category] = amount
         self.coverage_widgets[category] = covered
         self.spending.setRowHeight(row, 64)
+
+    def manual_spending_changed(self, *args):
+        if not getattr(self, 'applying_imported_spending', False):
+            self.profile['spending_source'] = 'manual'
+        self.schedule_update()
+
+    def update_spending_sort_values(self):
+        for row in range(self.spending.rowCount()):
+            category = self.spending.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            self.spending.item(row, 1).setData(Qt.ItemDataRole.DisplayRole, self.spend_widgets[category].value())
+
+    def sort_spending(self, column):
+        if column != 1:
+            return
+        self.spending_sort_order = (Qt.SortOrder.AscendingOrder if self.spending_sort_order == Qt.SortOrder.DescendingOrder else Qt.SortOrder.DescendingOrder)
+        self.update_spending_sort_values()
+        self.spending.sortItems(1, self.spending_sort_order)
+        self.spending.horizontalHeader().setSortIndicator(1, self.spending_sort_order)
+        self.spending.horizontalHeader().setSortIndicatorShown(True)
+
+    def manage_one_off_transactions(self):
+        self.imports_page.tabs.setCurrentIndex(0)
+        self.navigate('imports')
+
+    def color_spending_coverage(self, baseline):
+        colors = {'low': ('#fde7e7', '#792d2d', '#e9bbbb'),
+                  'medium': ('#fff4ce', '#674d0d', '#e6d18a'),
+                  'high': ('#e3f3e7', '#205735', '#a8d4b4')}
+        for category, widget in self.coverage_widgets.items():
+            spend = self.spend_widgets[category].value()
+            automatic = widget.value() < 0
+            rate = (baseline.category_rewards.get(category, 0) / (spend * 12) * 100 if spend else None) if automatic else widget.value()
+            widget.setSpecialValueText(f'Auto · {rate:.2f}%' if automatic and rate is not None else 'Auto')
+            band = 'unknown' if rate is None else 'low' if rate <= 1 + 1e-9 else 'high' if rate >= 3 - 1e-9 else 'medium'
+            widget.setProperty('coverageBand', band)
+            if band == 'unknown':
+                widget.setStyleSheet('')
+                widget.setToolTip('Add spending to calculate automatic coverage, or enter your current coverage rate.')
+            else:
+                background, foreground, border = colors[band]
+                widget.setStyleSheet(f'QDoubleSpinBox {{ background: {background}; color: {foreground}; border-color: {border}; }} QLineEdit {{ background: transparent; color: {foreground}; border: none; }}')
+                widget.setToolTip(f'{"Automatic effective" if automatic else "Manual"} coverage: {rate:.2f}%. Red: 1% or below; yellow: above 1% and below 3%; green: 3% or above.')
 
     def schedule_update(self, *args):
         if hasattr(self, "timer"):
@@ -819,6 +874,10 @@ class MainWindow(QMainWindow):
     def recalculate(self):
         self.save_profile()
         self.matches, baseline, warnings = recommend(self.cards, self.profile)
+        self.update_spending_sort_values()
+        if self.spending_sort_order is not None:
+            self.spending.sortItems(1, self.spending_sort_order)
+        self.color_spending_coverage(baseline)
         monthly = sum(self.profile['spend'].values())
         self.monthly_metric.value.setText(money(monthly))
         self.rewards_metric.value.setText(money(baseline.total))

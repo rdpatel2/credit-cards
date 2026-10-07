@@ -113,6 +113,43 @@ def test_spending_application_updates_recommendations_and_profile(owner):
     assert owner.matches
 
 
+def test_one_off_import_and_toggle_update_imported_spending_only(owner):
+    from PySide6.QtCore import Qt
+    review = dialog(owner, AMEX)
+    review.card.setCurrentIndex(review.card.findData('american-express-blue-cash-everyday'))
+    for _, category, _ in review.merchant_widgets.values():
+        category.setCurrentIndex(category.findData('groceries'))
+    flight_index = next(i for i, row in enumerate(review.rows) if 'DELTA' in row['description'])
+    flight_picker = review.transactions.cellWidget(flight_index, 6)
+    flight_picker.setChecked(True)
+    assert review.rows[flight_index]['one_off']
+    review.confirm.setChecked(True)
+    review.commit()
+    page = owner.imports_page
+    page.reload()
+    page.set_spending(page.ledger.monthly_spending()[0])
+    assert owner.profile['spending_source'] == 'imports'
+    assert owner.profile['spend']['groceries'] == 167.33
+    index = next(i for i, row in enumerate(page.history) if 'DELTA' in row['description'])
+    page.transactions.item(index, 5).setCheckState(Qt.CheckState.Unchecked)
+    assert owner.profile['spend']['groceries'] == 754.13
+    assert page.ledger.transactions()[0]['one_off'] == 0
+    page.transactions.item(index, 5).setCheckState(Qt.CheckState.Checked)
+    assert owner.profile['spend']['groceries'] == 167.33
+    # A manual edit opts out of automatic replacement of the spending inputs.
+    owner.spend_widgets['groceries'].setValue(250)
+    owner.recalculate()
+    assert owner.profile['spending_source'] == 'manual'
+    page.transactions.item(index, 5).setCheckState(Qt.CheckState.Unchecked)
+    assert owner.spend_widgets['groceries'].value() == 250
+    assert 'manual inputs are unchanged' in page.status.text()
+    page.transactions.item(index, 5).setCheckState(Qt.CheckState.Checked)
+    reopened = MainWindow(owner.directory, auto_refresh=False)
+    assert any(row['one_off'] for row in reopened.imports_page.history)
+    assert reopened.spend_widgets['groceries'].value() == 250
+    reopened.close()
+
+
 def test_actual_pdf_is_extracted_in_background(owner, tmp_path, app):
     import pymupdf
     path = tmp_path / 'statement.pdf'

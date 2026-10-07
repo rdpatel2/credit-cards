@@ -181,7 +181,7 @@ class ImportDialog(QDialog):
             self.merchants.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.merchants.setColumnWidth(col, width)
         self.tabs.addTab(self.merchants, 'New merchants')
-        self.transactions = grid(['DESCRIPTION', 'DATE', 'AMOUNT', 'TYPE', 'IMPORT', 'CATEGORY'])
+        self.transactions = grid(['DESCRIPTION', 'DATE', 'AMOUNT', 'TYPE', 'IMPORT', 'CATEGORY', 'ONE-OFF'])
         for col, width in ((1, 110), (2, 105), (3, 90), (4, 145), (5, 230)):
             self.transactions.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.transactions.setColumnWidth(col, width)
@@ -374,6 +374,12 @@ class ImportDialog(QDialog):
             else:
                 self.transactions.setItem(index, 5, QTableWidgetItem('Excluded from spending'))
                 self.row_categories.append(None)
+            one_off = QCheckBox('One-off')
+            one_off.setChecked(row.get('one_off', False))
+            one_off.setEnabled(row['kind'] in ('purchase', 'refund'))
+            one_off.setToolTip('Keep in history, but exclude from recommendation spending. Mark a matching refund separately.')
+            one_off.toggled.connect(lambda checked, item=row: item.update(one_off=checked))
+            self.transactions.setCellWidget(index, 6, one_off)
         duplicates = sum(row['duplicate'] for row in self.rows)
         self.summary.setText(f'{len(self.rows)} transactions · {len(groups)} new merchants · {duplicates} duplicates · {amount(self.statement.purchases_cents)} purchases')
         if not groups:
@@ -461,8 +467,11 @@ class ImportsPage(QWidget):
         layout.addLayout(actions)
         layout.addWidget(text('CSV exports with mapped columns, or BOFA and Amex PDFs with selectable text. Choose new merchant categories once.', 'muted', True))
         self.tabs = QTabWidget()
-        self.transactions = grid(['MERCHANT / DESCRIPTION', 'DATE', 'AMOUNT', 'CATEGORY', 'CARD'])
+        self.transactions = grid(['MERCHANT / DESCRIPTION', 'DATE', 'AMOUNT', 'CATEGORY', 'CARD', 'ONE-OFF'])
         self.transactions.itemDoubleClicked.connect(self.edit_transaction)
+        self.transactions.itemChanged.connect(self.one_off_changed)
+        self.transactions.horizontalHeaderItem(5).setToolTip('Exclude unusual purchases from imported monthly averages used for recommendations.')
+        self.transactions.setColumnWidth(5, 90)
         self.tabs.addTab(self.transactions, 'Transactions')
         self.merchants = grid(['MERCHANT', 'DEFAULT CATEGORY', 'APPLIES TO'])
         self.merchants.itemDoubleClicked.connect(self.edit_rule)
@@ -498,6 +507,7 @@ class ImportsPage(QWidget):
         self.saved_rules = self.ledger.rules()
         self.saved_accounts = self.ledger.accounts()
         self.saved_imports = self.ledger.imports()
+        self.transactions.blockSignals(True)
         self.transactions.setRowCount(len(self.history))
         for index, row in enumerate(self.history):
             card = getattr(self.owner, 'by_id', {}).get(row['card_id'], {})
@@ -507,6 +517,17 @@ class ImportsPage(QWidget):
             for col, value in enumerate(values):
                 self.transactions.setItem(index, col, QTableWidgetItem(value))
                 self.transactions.item(index, col).setToolTip(row['filename'] + f" · page {row['page']} · {row['kind']}")
+            one_off = QTableWidgetItem('')
+            one_off.setData(Qt.ItemDataRole.UserRole, row['id'])
+            one_off.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            if row['kind'] in ('purchase', 'refund'):
+                one_off.setFlags(one_off.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                one_off.setCheckState(Qt.CheckState.Checked if row['one_off'] else Qt.CheckState.Unchecked)
+                one_off.setToolTip('Keep in history and Breakdown; exclude from imported recommendation averages. Mark matching refunds separately.')
+            else:
+                one_off.setText('—')
+            self.transactions.setItem(index, 5, one_off)
+        self.transactions.blockSignals(False)
         self.merchants.setRowCount(len(self.saved_rules))
         for index, rule in enumerate(self.saved_rules):
             scope = rule['scope']
@@ -525,7 +546,7 @@ class ImportsPage(QWidget):
                       card.get('name', account['card_id']), str(account['statement_count'])]
             for col, value in enumerate(values):
                 self.accounts.setItem(index, col, QTableWidgetItem(value))
-        self.status.setText('Double-click a purchase for a one-time override, or a saved merchant to change its default. Payments and interest do not count as spending.')
+        self.status.setText('Check One-off for unusual purchases to exclude them from recommendation averages. Double-click a purchase to change its category. Payments and interest do not count as spending.')
         breakdown = getattr(self.owner, 'breakdown_page', None)
         if breakdown:
             breakdown.reload()
@@ -621,7 +642,24 @@ class ImportsPage(QWidget):
             self.ledger.reassign_account(account['account_key'], choices.currentData())
             self.reload()
 
+    def one_off_changed(self, item):
+        if item.column() != 5 or not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            return
+        ident = item.data(Qt.ItemDataRole.UserRole)
+        one_off = item.checkState() == Qt.CheckState.Checked
+        self.ledger.set_one_off(ident, one_off)
+        for row in self.history:
+            if row['id'] == ident:
+                row['one_off'] = int(one_off)
+        if self.owner.profile.get('spending_source') == 'imports':
+            self.set_spending(self.ledger.monthly_spending()[0], navigate=False)
+            self.status.setText('One-off setting saved. Imported monthly spending and recommendations updated; transaction history is unchanged.')
+        else:
+            self.status.setText('One-off setting saved. Choose Use imported spending to update recommendations; your manual inputs are unchanged.')
+
     def edit_transaction(self, *args):
+        if args and isinstance(args[0], QTableWidgetItem) and args[0].column() == 5:
+            return
         index = self.transactions.currentRow()
         if index < 0:
             return
@@ -643,6 +681,8 @@ class ImportsPage(QWidget):
         layout = QVBoxLayout(dialog)
         layout.addWidget(text('Use your imported spending?', 'sectionTitle'))
         layout.addWidget(text('This replaces the current spending inputs with each card’s average across its imported statement closing months, then adds the card averages together. Use complete statements for a representative average.', 'muted', True))
+        one_off_count = sum(bool(row['one_off']) for row in self.ledger.transactions())
+        layout.addWidget(text(f'{one_off_count} one-off transaction(s) excluded. One-off purchases remain in history and Breakdown; imported months still count in the average.', 'muted', True))
         preview = grid(['CATEGORY', 'MONTHLY AVERAGE'])
         preview.setRowCount(len(spending))
         for index, (category, value) in enumerate(sorted(spending.items(), key=lambda pair: -pair[1])):
@@ -658,11 +698,17 @@ class ImportsPage(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.set_spending(spending)
 
-    def set_spending(self, spending):
+    def set_spending(self, spending, navigate=True):
         for category in spending:
             if category not in self.owner.spend_widgets:
                 self.owner.add_spend_row(category)
-        for category, widget in self.owner.spend_widgets.items():
-            widget.setValue(spending.get(category, 0))
+        self.owner.applying_imported_spending = True
+        try:
+            for category, widget in self.owner.spend_widgets.items():
+                widget.setValue(spending.get(category, 0))
+        finally:
+            self.owner.applying_imported_spending = False
+        self.owner.profile['spending_source'] = 'imports'
         self.owner.recalculate()
-        self.owner.navigate('spending')
+        if navigate:
+            self.owner.navigate('spending')
