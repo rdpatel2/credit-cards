@@ -57,6 +57,8 @@ Real card artwork appears in browsing results, wallet entries, recommendations, 
 
 [Preview the wallet with card artwork](docs/artwork-preview.png) (sample wallet).
 
+List thumbnails use larger 128 × 80 display slots and smooth resampling to the display's physical pixel density, with cached resized images and pixel-aligned drawing. Browsing results show Card and Annual Fee; discontinued cards remain excluded, so there is no separate Availability column.
+
 ![Card-category dashboard](docs/dashboard-preview.png)
 
 For cards with one selectable rewards category, **Card settings** uses a searchable dropdown. Choose the category currently set with your issuer and click **Save**; Coverage updates using that selection and restores it when you reopen the app. Multi-category benefits retain checkbox lists. For Bank of America Customized Cash Rewards, choose **Dining** to apply its standing 3% dining rate; separate activation is not required. Its **Online Shopping** option maps to the **Online retail** spending bucket. Coverage displays effective rewards after any shared spending cap, so large spending amounts can show less than the advertised category rate.
