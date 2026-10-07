@@ -17,13 +17,15 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressBar, QAbstractItemView, QScrollArea, QStackedWidget, QAbstractSpinBox,
 )
 
-from .catalog import CatalogStore, data_dir, load_profile, write_json, SOURCE
+from .catalog import CatalogStore, data_dir, load_profile, write_json, read_json, SOURCE
 from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_offers, point_value, rules_for
 from .import_ui import ImportsPage
-
+from .search import matches_card
+from .source_audit import source_kind
 
 from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox
 
+SOURCE_REVIEWS = Path(__file__).parent / "data" / "source_reviews.json"
 
 
 def money(value):
@@ -789,8 +791,7 @@ class MainWindow(QMainWindow):
     def filter_catalog(self, *args):
         query = self.search.text().strip().lower()
         issuer = self.issuer_filter.currentData() or ''
-        self.explored = [c for c in self.cards if (not issuer or c['issuerId'] == issuer) and query in
-                         (c['name'] + ' ' + c['issuerId'] + ' ' + str(c.get('benefits', [])) + str(c.get('earningRates', []))).lower()]
+        self.explored = [c for c in self.cards if (not issuer or c['issuerId'] == issuer) and matches_card(c, query)]
         self.catalog_table.blockSignals(True)
         self.catalog_table.setRowCount(len(self.explored))
         for row, card in enumerate(self.explored):
@@ -827,8 +828,14 @@ class MainWindow(QMainWindow):
         esc = lambda value: html.escape(str(value))
         def source_links(urls):
             from urllib.parse import urlsplit
-            return '<br>'.join(f'<a href="{esc(url)}">View published terms · {esc(urlsplit(url).hostname)}</a>' for url in urls if isinstance(url, str) and url.startswith('https://'))
+            return '<br>'.join(f'<a href="{esc(url)}">{esc(source_kind(url, card['issuerId']))} · {esc(urlsplit(url).hostname)}</a>' for url in urls if isinstance(url, str) and url.startswith('https://'))
         overview, offers_html, benefits_html, sources = [], [], [], []
+        review = read_json(SOURCE_REVIEWS, {}).get(card['id'])
+        if review:
+            checked = '<h3>Issuer terms checked ' + esc(review['checkedOn']) + '</h3>'
+            checked += '<ul>' + ''.join('<li>' + esc(note) + '</li>' for note in review['confirmed'] + review['limits']) + '</ul>'
+            overview.append(checked)
+            sources.append(checked + '<p>' + source_links(review['sources']) + '</p>')
         match = next((m for m in self.matches if m['card']['id'] == card['id']), None)
         if match and sum(self.profile['spend'].values()):
             overview.append(f"<h3>Your wallet + this card</h3><p><b>{money(match['ongoing'])}</b> additional value each year<br><b>{money(match['first_year'])}</b> additional value in year one</p>")
@@ -888,11 +895,12 @@ class MainWindow(QMainWindow):
                 selection = detail.get('categorySelection', {})
                 cats = ', '.join(label(c) for c in detail.get('eligibleCategories', selection.get('options', [])))
                 benefits_html.append(f"<p>{esc(detail.get('multiplier'))}{esc(units.get(detail.get('rewardUnit'), ' rewards'))} · {esc(selection.get('mode', 'fixed categories').replace('_', ' '))}<br>{esc(cats)}<br>Cycle: {esc(selection.get('currentCycle', 'standing terms'))}</p>")
-            benefits_html.append(f"<p>Verified: {esc(benefit.get('lastVerified', 'unknown'))}<br>{source_links([benefit.get('sourceUrl', '')])}</p>")
+            benefits_html.append(f"<p>Verification date reported by community source: {esc(benefit.get('lastVerified', 'unknown'))}<br>{source_links([benefit.get('sourceUrl', '')])}</p>")
         meta = card.get('sourceMeta', {})
         sources.append(f"<h3>Card & benefit sources</h3><p>Reviewed by source: {esc(meta.get('lastReviewedDate', 'user supplied' if card['status'] == 'custom' else 'unknown'))}<br>{source_links(meta.get('sourceUrls', []))}</p>")
         sources.append(f"<h3>Offer sources</h3><p>Reviewed by source: {esc(offer_meta.get('lastReviewedDate', 'unknown'))}<br>{source_links(offer_meta.get('sourceUrls', []))}</p>")
         sources.append(f"<h3>Catalog freshness</h3><p>Downloaded: {esc(self.catalog.get('fetched_at', 'unknown'))}<br><a href='{SOURCE}'>Community catalog</a></p><p>A download refreshes published records; it does not independently verify every issuer’s terms. Review dates may be older than the download date.</p>")
+        sources.append('<p>Issuer-domain labels identify the link’s domain; they do not certify current terms. Third-party references require confirmation against issuer terms.</p>')
         sources.append('<p>Card illustrations are stylized identifiers, not official issuer artwork.</p>')
         for name, content in [('Overview', overview), ('Offers', offers_html), ('Benefits', benefits_html), ('Sources', sources)]:
             browser = self.detail_browsers[name]

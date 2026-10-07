@@ -1,0 +1,21 @@
+{
+  "bank-of-america-customized-cash-rewards": {
+    "checkedOn": "2026-10-07",
+    "sources": [
+      "https://www.bankofamerica.com/credit-cards/products/cash-back-credit-card/",
+      "https://www.bankofamerica.com/credit-cards/products/cash-back-credit-card/cash-back-category-choices/"
+    ],
+    "confirmed": [
+      "No annual fee. Ongoing rates: 3% for the selected category, 2% for grocery stores and wholesale clubs, and 1% otherwise.",
+      "The 3% and 2% rates share a $2,500 purchase limit per calendar quarter; purchases above it earn 1%.",
+      "The public online offer is $200 after $1,000 in purchases within 90 days of account opening.",
+      "New accounts receive 6% in the selected category during the first year, with the same shared quarterly purchase limit. Afterward the selected-category rate is 3%."
+    ],
+    "limits": [
+      "The first-year promotional earning rate is absent from the community feed and excluded from this app's numeric first-year estimates.",
+      "Category selection is required; separate activation of the standing choice-category rate is not required.",
+      "Gas and EV charging are one issuer choice. The source models them as separate options, so estimates currently cover only the selected spending bucket.",
+      "This dated check covers the listed rewards, annual fee, public bonus, and category terms. It does not verify every benefit, APR, eligibility rule, or other card."
+    ]
+  }
+}

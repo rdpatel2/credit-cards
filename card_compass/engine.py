@@ -58,11 +58,17 @@ def rules_for(card, profile, today=None):
     today = today or date.today()
     settings = profile.get("card_settings", {}).get(card["id"], {})
     warnings, rules = [], []
+    # The issuer's standing Customized Cash category needs selection, not activation.
+    # Its introductory extra 3% is not represented by the feed's recurring rates.
+    if card['id'] == 'bank-of-america-customized-cash-rewards':
+        warnings.append('First-year 6% choice-category promotion (issuer check 2026-10-07) is excluded from numeric estimates; see Sources')
     rates = list(card.get("earningRates", []))
     for benefit in card.get("benefits", []):
         if benefit.get("benefitType") != "bonus_category":
             continue
         rate = dict(benefit.get("bonusCategoryDetail", {}))
+        if card['id'] == 'bank-of-america-customized-cash-rewards' and benefit.get('id') == 'boa-ccr-choice-category-bonus':
+            rate['requiresActivation'] = False
         selection = rate.get("categorySelection")
         if selection:
             mode = selection.get("mode")
