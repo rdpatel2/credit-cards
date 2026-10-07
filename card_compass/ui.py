@@ -1,0 +1,238 @@
+"""Desktop presentation primitives: scalable card artwork and a shared theme."""
+import hashlib
+
+from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget
+
+STYLE = """
+QWidget { color: #233d38; font-size: 13px; }
+QMainWindow, QWidget#canvas { background: #f5f7f6; }
+QWidget#sidebar { background: #102e29; }
+QLabel { background: transparent; }
+QLabel#brand { color: #ffffff; font-size: 18px; font-weight: 700; }
+QLabel#brandTag { color: #83a79c; font-size: 11px; }
+QLabel#navSection { color: #6f988c; font-size: 10px; font-weight: 600; }
+QLabel#sideStatus { color: #b4cdc4; font-size: 11px; }
+QPushButton#nav { color: #b4cdc4; background: transparent; border: none; border-radius: 8px; text-align: left; padding: 13px 16px; font-size: 13px; }
+QPushButton#nav:hover { background: #1a3e34; color: #ffffff; }
+QPushButton#nav:checked { background: #254b3e; color: #ccf5df; font-weight: 600; }
+QPushButton#sideRefresh { background: #1a3e34; color: #d9eee5; border: 1px solid #355348; }
+QLabel#pageTitle { font-size: 29px; font-weight: 700; color: #183a2d; }
+QLabel#sectionTitle { font-size: 17px; font-weight: 600; color: #183a2d; }
+QLabel#muted { color: #64776b; }
+QLabel#eyebrow { color: #60786c; font-size: 10px; font-weight: 600; }
+QLabel#statValue { font-size: 28px; font-weight: 600; color: #183a2d; }
+QLabel#heroTitle { font-size: 23px; font-weight: 600; color: #183a2d; }
+QLabel#heroValue { font-size: 33px; font-weight: 600; color: #187148; }
+QLabel#identityTitle { color: #233d38; font-size: 14px; font-weight: 600; }
+QLabel#identityIssuer { color: #778980; font-size: 11px; }
+QLabel#pill { color: #236349; background: #e6f2e9; border-radius: 5px; padding: 4px 9px; font-size: 11px; }
+QFrame#surface, QFrame#stat { background: #ffffff; border: 1px solid #e1e8e2; border-radius: 12px; }
+QFrame#hero { background: #edf4ed; border: 1px solid #dce8dd; border-radius: 14px; }
+QFrame#empty { background: #ffffff; border: 1px solid #e1e8e2; border-radius: 14px; }
+QPushButton { background: #ffffff; border: 1px solid #d8e1da; border-radius: 7px; padding: 10px 17px; color: #334e40; font-weight: 500; }
+QPushButton:hover { background: #eef4ef; border-color: #b5cbbb; }
+QPushButton:pressed { background: #dceadf; }
+QPushButton#primary { background: #236347; color: #ffffff; border: 1px solid #236347; }
+QPushButton#primary:hover { background: #194f38; }
+QPushButton#quiet { background: transparent; border: none; color: #236347; padding: 8px; }
+QPushButton:disabled { color: #84978a; background: #edf1ee; border-color: #edf1ee; }
+QPushButton:focus, QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 1px solid #398161; }
+QLineEdit, QComboBox, QDoubleSpinBox { background: #ffffff; border: 1px solid #dce4dd; border-radius: 7px; padding: 10px 12px; selection-background-color: #d6ebdd; }
+QComboBox::drop-down { border: none; width: 28px; }
+QDoubleSpinBox { min-width: 85px; }
+QTableWidget { background: #ffffff; alternate-background-color: #ffffff; border: 1px solid #e1e8e2; border-radius: 10px; gridline-color: #edf1ee; }
+QTableWidget::item { padding: 12px 16px; border-bottom: 1px solid #edf1ee; }
+QTableWidget::item:hover { background: #f5f9f6; }
+QTableWidget::item:selected { background: #edf5ee; color: #183a2d; }
+QHeaderView { background: #ffffff; }
+QHeaderView::section { background: #fafcf9; color: #667c6f; font-size: 11px; padding: 13px 16px; border: none; border-bottom: 1px solid #e6ece7; }
+QTableCornerButton::section { background: white; border: none; }
+QListWidget { background: transparent; border: none; outline: none; }
+QListWidget::item { border-radius: 12px; background: #ffffff; border: 1px solid #e1e8e2; margin-bottom: 12px; }
+QListWidget::item:selected { background: #eef5ef; border: 1px solid #98b6a1; }
+QTextBrowser { border: none; background: #ffffff; padding: 8px; font-size: 13px; }
+QDialog { background: #f5f7f6; }
+QTabWidget::pane { background: #ffffff; border: 1px solid #e1e8e2; border-radius: 8px; top: -1px; }
+QTabBar::tab { color: #788d80; background: transparent; padding: 12px 16px; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #236347; border-bottom: 2px solid #236347; }
+QScrollArea { border: none; background: transparent; }
+QScrollBar:vertical { background: transparent; width: 7px; margin: 3px 0; }
+QScrollBar::handle:vertical { background: #c6d3ca; border-radius: 3px; min-height: 35px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+QCheckBox { spacing: 10px; padding: 7px 0; }
+QCheckBox::indicator { width: 17px; height: 17px; }
+QProgressBar { max-height: 4px; border: none; border-radius: 2px; background: #254b3e; }
+QProgressBar::chunk { background: #89c69d; border-radius: 2px; }
+QStatusBar { background: #f5f7f6; color: #788d80; }
+QToolTip { color: #e5f4ea; background: #183a2d; border: none; padding: 8px; }
+"""
+
+ICONS = {
+    "compass": '<circle cx="12" cy="12" r="9"/><path d="m16 8-3 5-5 3 3-5z"/>',
+    "matches": '<path d="m12 3 2.4 5.9 6.4.5-4.9 4.1 1.5 6.2-5.4-3.4-5.4 3.4 1.5-6.2-4.9-4.1 6.4-.5z"/>',
+    "wallet": '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M21 10h-6v5h6M3 8h17"/><path d="M17 12.5h.1"/>',
+    "spending": '<path d="M4 20h16M6 16v-5M12 16V4M18 16V8"/>',
+    "coverage": '<path d="m12 3 8 3v5c0 5-8 10-8 10S4 16 4 11V6zM8 12l3 3 5-6"/>',
+    "explore": '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
+    "settings": '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor"/><circle cx="15" cy="17" r="3" fill="currentColor"/>',
+    "refresh": '<path d="M20 8a8 8 0 0 0-14-2L3 9M3 3v6h6M4 16a8 8 0 0 0 14 2l3-3M15 15h6v6"/>',
+    "arrow": '<path d="M4 12h16m-6-6 6 6-6 6"/>',
+    "close": '<path d="m6 6 12 12M6 18 18 6"/>',
+    "plus": '<path d="M12 5v14M5 12h14"/>',
+}
+
+
+def icon(name, color="#a4c9b8", size=20):
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" color="{color}" stroke="{color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</svg>'
+    renderer = QSvgRenderer(svg.encode())
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def text(value, kind=None, wrap=False):
+    widget = QLabel(value)
+    if kind:
+        widget.setObjectName(kind)
+    widget.setWordWrap(wrap)
+    return widget
+
+
+def surface(kind="surface"):
+    widget = QFrame()
+    widget.setObjectName(kind)
+    return widget
+
+
+class Metric(QFrame):
+    def __init__(self, caption, description):
+        super().__init__()
+        self.setObjectName("stat")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(7)
+        layout.addWidget(text(caption.upper(), "eyebrow"))
+        self.value = text("—", "statValue")
+        layout.addWidget(self.value)
+        layout.addWidget(text(description, "muted", True))
+
+
+class CardArt(QWidget):
+    """Stylized, scalable identity artwork; not a reproduction of issuer card art."""
+    COLORS = [("#163c30", "#54805b"), ("#173440", "#507e88"), ("#34383c", "#777a79"), ("#584829", "#9c8550"), ("#433847", "#857084")]
+
+    def __init__(self, card=None, width=220, height=136):
+        super().__init__()
+        self.card = card or {"name": "Card Compass", "issuerId": "YOUR NEXT CARD"}
+        self.setFixedSize(width, height)
+        self.setAccessibleName(f"Card illustration: {self.card['name']}")
+
+    def set_card(self, card):
+        self.card = card
+        self.setAccessibleName(f"Card illustration: {card['name']}")
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        index = hashlib.sha256(self.card["issuerId"].encode()).digest()[0] % len(self.COLORS)
+        first, second = self.COLORS[index]
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
+        gradient.setColorAt(0, QColor(first))
+        gradient.setColorAt(1, QColor(second))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(gradient)
+        p.drawRoundedRect(rect, 10, 10)
+        p.setPen(QPen(QColor(255, 255, 255, 22), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for offset in (0, 22, 44, 66):
+            p.drawEllipse(QRectF(self.width() * .55 + offset, -self.height() * .3, self.width(), self.height() * 1.8))
+        small = self.width() < 130
+        pad = 11 if small else 19
+        p.setPen(QColor("#e2eddd"))
+        font = QFont(self.font())
+        font.setPixelSize(8 if small else 10)
+        font.setWeight(QFont.Weight.Medium)
+        p.setFont(font)
+        issuer = self.card["issuerId"].replace("-", " ").upper()
+        p.drawText(QRectF(pad, pad, self.width() - pad * 2, 18), Qt.AlignmentFlag.AlignLeft, p.fontMetrics().elidedText(issuer, Qt.TextElideMode.ElideRight, self.width() - pad * 2))
+        p.setBrush(QColor("#cdbf88"))
+        p.setPen(QPen(QColor("#9d986e"), .7))
+        chip_y = 28 if small else 47
+        p.drawRoundedRect(QRectF(pad, chip_y, 17 if small else 28, 12 if small else 20), 3, 3)
+        p.drawLine(pad + (8 if small else 14), chip_y, pad + (8 if small else 14), chip_y + (12 if small else 20))
+        if not small:
+            font.setPixelSize(14)
+            font.setWeight(QFont.Weight.DemiBold)
+            p.setFont(font)
+            p.setPen(QColor("#ffffff"))
+            name = p.fontMetrics().elidedText(self.card["name"], Qt.TextElideMode.ElideRight, self.width() - pad * 2)
+            p.drawText(QRectF(pad, self.height() - 45, self.width() - pad * 2, 23), Qt.AlignmentFlag.AlignLeft, name)
+        p.end()
+
+
+CARD_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class CardDelegate(QStyledItemDelegate):
+    """Paint identities directly so long catalogs don't need hundreds of widgets."""
+    def paint(self, painter, option, index):
+        card = index.data(CARD_ROLE)
+        if not card:
+            return super().paint(painter, option, index)
+        p = painter
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(option.rect)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        background = QColor('#edf5ee' if selected else '#f5f9f6' if hovered else '#ffffff')
+        if isinstance(option.widget, QListWidget):
+            p.setBrush(background)
+            p.setPen(QPen(QColor('#98b6a1' if selected else '#e1e8e2'), 1))
+            p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 12, 12)
+        else:
+            p.fillRect(rect, background)
+            p.setPen(QPen(QColor('#edf1ee'), 1))
+            p.drawLine(rect.bottomLeft(), rect.bottomRight())
+        art = QRectF(rect.left() + 18, rect.center().y() - 27, 84, 54)
+        colors = CardArt.COLORS[hashlib.sha256(card['issuerId'].encode()).digest()[0] % len(CardArt.COLORS)]
+        gradient = QLinearGradient(art.topLeft(), art.bottomRight())
+        gradient.setColorAt(0, QColor(colors[0]))
+        gradient.setColorAt(1, QColor(colors[1]))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(gradient)
+        p.drawRoundedRect(art, 7, 7)
+        p.setBrush(QColor('#cdbf88'))
+        p.drawRoundedRect(QRectF(art.left() + 10, art.top() + 24, 15, 11), 2, 2)
+        font = QFont(option.font)
+        font.setPixelSize(7)
+        p.setFont(font)
+        p.setPen(QColor('#e2eddd'))
+        issuer = card['issuerId'].replace('-', ' ').upper()
+        p.drawText(QRectF(art.left() + 10, art.top() + 8, 67, 12), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(issuer, Qt.TextElideMode.ElideRight, 67))
+        left = art.right() + 18
+        width = max(0, int(rect.right() - left - 16))
+        font.setPixelSize(14)
+        font.setWeight(QFont.Weight.DemiBold)
+        p.setFont(font)
+        p.setPen(QColor('#233d38'))
+        p.drawText(QRectF(left, rect.center().y() - 20, width, 23), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(card['name'], Qt.TextElideMode.ElideRight, width))
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.Normal)
+        p.setFont(font)
+        p.setPen(QColor('#778980'))
+        p.drawText(QRectF(left, rect.center().y() + 6, width, 20), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(card['issuerId'].replace('-', ' ').title(), Qt.TextElideMode.ElideRight, width))
+        p.restore()
