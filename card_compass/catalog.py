@@ -79,7 +79,10 @@ class CatalogStore:
                 pass
         return {"cards": [], "fetched_at": None, "source": SOURCE}
 
-    def refresh(self, progress=lambda done, total: None):
+    def refresh(self, progress=lambda done, total: None, cancelled=lambda: False):
+        def check_cancelled():
+            if cancelled():
+                raise InterruptedError("Refresh cancelled")
         index = self.fetcher(f"{BASE}/index.json")
         entries = index.get("cards", [])
         if not entries or len(entries) > 1000:
@@ -87,10 +90,12 @@ class CatalogStore:
         # All candidates are needed for wallet-wide comparisons; download only JSON,
         # never card artwork. No partial refresh replaces a working cache.
         def get_card(entry):
+            check_cancelled()
             ident = entry["id"]
             if not ident or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in ident):
                 raise ValueError("Invalid source card ID")
             card = self.fetcher(f"{BASE}/cards/{ident}.json")
+            check_cancelled()
             bonus = self.fetcher(f"{BASE}/bonuses/{ident}.json")
             if card.get("id") != ident or bonus.get("cardId") != ident:
                 raise ValueError("Mismatched source identity")
@@ -99,9 +104,16 @@ class CatalogStore:
         cards = []
         with ThreadPoolExecutor(max_workers=8) as pool:
             futures = [pool.submit(get_card, entry) for entry in entries]
-            for future in as_completed(futures):
-                cards.append(future.result())
-                progress(len(cards), len(entries))
+            try:
+                for future in as_completed(futures):
+                    check_cancelled()
+                    cards.append(future.result())
+                    progress(len(cards), len(entries))
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
+        check_cancelled()
         result = validate_catalog({
             "cards": sorted(cards, key=lambda c: (c["issuerId"], c["name"])),
             "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
