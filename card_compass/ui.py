@@ -4,7 +4,54 @@ import hashlib
 from PySide6.QtCore import Qt, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap, QPalette
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget
+from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget, QComboBox, QDoubleSpinBox, QDateEdit, QCompleter
+
+
+class ScrollSafeComboBox(QComboBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class ScrollSafeDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class ScrollSafeDateEdit(QDateEdit):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class SearchableCategoryBox(ScrollSafeComboBox):
+    """Search existing labels; partial or unknown text is never a category."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.lineEdit().setPlaceholderText('Type to search categories…')
+        completer = QCompleter(self.model(), self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.setCompleter(completer)
+        completer.activated[str].connect(self.select_completion)
+        # Callers use the same signal for selection and validity changes.
+        self.lineEdit().textEdited.connect(lambda _: self.currentIndexChanged.emit(self.currentIndex()))
+
+    def select_completion(self, value):
+        index = self.findText(value, Qt.MatchFlag.MatchExactly)
+        if index >= 0:
+            self.setCurrentIndex(index)
+            self.setEditText(self.itemText(index))
+            self.currentIndexChanged.emit(index)
+
+    def currentData(self, role=Qt.ItemDataRole.UserRole):
+        if not self.selection_valid():
+            return None
+        return super().currentData(role)
+
+    def selection_valid(self):
+        return self.currentIndex() >= 0 and self.currentText() == self.itemText(self.currentIndex())
 
 STYLE = """
 QWidget { color: #233d38; font-size: 13px; }

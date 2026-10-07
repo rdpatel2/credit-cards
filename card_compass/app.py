@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QComboBox, QDoubleSpinBox, QCheckBox,
+    QPushButton, QLineEdit, QCheckBox,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QTextBrowser,
     QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QFormLayout,
     QMessageBox, QProgressBar, QAbstractItemView, QScrollArea, QStackedWidget, QAbstractSpinBox,
@@ -22,7 +22,7 @@ from .engine import DEFAULT_CATEGORIES, canonical, label, recommend, available_o
 from .import_ui import ImportsPage
 
 
-from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette
+from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox
 
 
 
@@ -31,7 +31,7 @@ def money(value):
 
 
 def spin(value=0, maximum=100000, prefix="", suffix=""):
-    widget = QDoubleSpinBox()
+    widget = ScrollSafeDoubleSpinBox()
     widget.setRange(0, maximum)
     widget.setDecimals(2)
     widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -116,6 +116,13 @@ class CardSettings(QDialog):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked if category in settings.get("selections", {}).get(benefit["id"], []) else Qt.CheckState.Unchecked)
                 options.addItem(item)
+            search = QLineEdit()
+            search.setPlaceholderText('Search these categories…')
+            search.textChanged.connect(lambda query, listing=options: [
+                listing.item(i).setHidden(query.casefold() not in listing.item(i).text().casefold())
+                for i in range(listing.count())
+            ])
+            inner.addWidget(search)
             inner.addWidget(options)
             self.choices[benefit["id"]] = (options, count)
         inner.addStretch()
@@ -379,7 +386,7 @@ class MainWindow(QMainWindow):
         results_heading.addWidget(self.result_count)
         results_heading.addStretch()
         results_heading.addWidget(text('SORT BY', 'eyebrow'))
-        self.sort = QComboBox()
+        self.sort = ScrollSafeComboBox()
         self.sort.addItems(['Ongoing value', 'First-year value'])
         self.sort.setCurrentText(self.profile.get('sort', 'Ongoing value'))
         self.sort.setMinimumWidth(165)
@@ -492,7 +499,7 @@ class MainWindow(QMainWindow):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.filter_catalog)
         search_row.addWidget(self.search, 1)
-        self.issuer_filter = QComboBox()
+        self.issuer_filter = ScrollSafeComboBox()
         self.issuer_filter.addItem('All issuers', '')
         self.issuer_filter.setMinimumWidth(200)
         self.issuer_filter.currentIndexChanged.connect(self.filter_catalog)
@@ -952,11 +959,14 @@ class MainWindow(QMainWindow):
         note = QLabel("Split this spending out of existing categories to avoid counting it twice. Portal and merchant categories apply only to those purchases.")
         note.setWordWrap(True)
         layout.addWidget(note)
-        choice = QComboBox()
+        choice = SearchableCategoryBox()
         for category in sorted(categories - set(self.spend_widgets)):
             choice.addItem(label(category), category)
         layout.addWidget(choice)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        accept = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        accept.setEnabled(bool(choice.currentData()))
+        choice.currentIndexChanged.connect(lambda _: accept.setEnabled(bool(choice.currentData())))
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)

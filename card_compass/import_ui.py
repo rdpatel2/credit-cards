@@ -8,13 +8,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QDate
 from PySide6.QtWidgets import (QWidget, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QPushButton, QComboBox, QCheckBox, QDateEdit, QFileDialog, QTabWidget, QTableWidget,
+    QPushButton, QCheckBox, QFileDialog, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QDialogButtonBox)
 
 from .engine import DEFAULT_CATEGORIES, canonical, label
 from .ledger import Ledger
 from .statements import extract_pdf_text, parse_statement_text
-from .ui import text, surface, icon
+from .ui import ScrollSafeComboBox, ScrollSafeDateEdit, SearchableCategoryBox, text, surface, icon
 
 EXTRA_CATEGORIES = {'auto_services': 'Auto services', 'medical': 'Healthcare',
                     'recreation': 'Recreation / golf', 'general_retail': 'General retail', 'rent': 'Rent'}
@@ -29,7 +29,7 @@ def category_label(key):
 
 
 def category_picker(categories, value=None, placeholder=True):
-    combo = QComboBox()
+    combo = SearchableCategoryBox()
     if placeholder:
         combo.addItem('Choose a category…', None)
     for key in sorted(categories, key=category_label):
@@ -89,14 +89,14 @@ class ImportDialog(QDialog):
         layout.addWidget(text('Teach your wallet once.', 'heroTitle'))
         layout.addWidget(text(self.path.name + ' · Your PDF stays on this device.', 'muted'))
         form = QHBoxLayout()
-        self.card = QComboBox()
+        self.card = ScrollSafeComboBox()
         self.card.addItem('Select the card for this statement…', None)
         for card in cards:
             self.card.addItem(card['name'] + ' · ' + card['issuerId'].replace('-', ' ').title(), card['id'])
         self.card.setMinimumWidth(330)
         form.addWidget(self.card, 1)
         form.addWidget(text('Statement closing date', 'muted'))
-        self.closing = QDateEdit(QDate.currentDate())
+        self.closing = ScrollSafeDateEdit(QDate.currentDate())
         self.closing.setCalendarPopup(True)
         self.closing.setDisplayFormat('MMM d, yyyy')
         self.closing.setMinimumHeight(40)
@@ -241,7 +241,7 @@ class ImportDialog(QDialog):
         self.merchants.setRowCount(len(groups))
         saved = self.ledger.rules()
         for index, (key, purchases) in enumerate(groups.items()):
-            name = QComboBox()
+            name = ScrollSafeComboBox()
             name.setEditable(True)
             name.addItem(key.title())
             for rule in saved:
@@ -249,7 +249,7 @@ class ImportDialog(QDialog):
                     name.addItem(rule['display_name'])
             name.setToolTip('\n'.join(p['description'] + (' · source label: ' + p['issuer_category'] if p['issuer_category'] else '') for p in purchases))
             category = category_picker(self.categories)
-            scope = QComboBox()
+            scope = ScrollSafeComboBox()
             scope.addItem('All my cards', 'global')
             scope.addItem('This issuer only', f'issuer:{self.statement.issuer}')
             scope.addItem('This card only', f'card:{card_id}')
@@ -326,9 +326,12 @@ class ImportDialog(QDialog):
         unresolved = {row['merchant_key'] for row in included if row['kind'] in ('purchase', 'refund') and
                       not (row.get('override_category') or mappings.get(row['merchant_key'], {}).get('category') or row.get('category'))}
         dates_match = self.statement and self.statement.closing_date == self.closing.date().toString('yyyy-MM-dd')
-        ready = bool(self.preview_valid and included and not unresolved and self.card.currentData() and dates_match and self.confirm.isChecked())
+        unfinished_search = any(row['include'] and combo and not combo.selection_valid()
+                                for row, combo in zip(self.rows, getattr(self, 'row_categories', [])))
+        ready = bool(self.preview_valid and included and not unresolved and not unfinished_search and self.card.currentData() and dates_match and self.confirm.isChecked())
         self.save.setEnabled(ready)
         self.readiness.setText(f'Choose categories for {len(unresolved)} new merchants.' if unresolved else
+                               'Select a matching category to finish your search.' if unfinished_search else
                                'No new transactions to save. Duplicates are skipped.' if not included else
                                'Check the date and review confirmation to save.' if not ready else f'Ready to save {len(included)} transactions locally.')
 
@@ -509,7 +512,7 @@ class ImportsPage(QWidget):
         dialog.setWindowTitle('Link this account to a wallet card')
         layout = QVBoxLayout(dialog)
         layout.addWidget(text('Change the linked card', 'sectionTitle'))
-        choices = QComboBox()
+        choices = ScrollSafeComboBox()
         expected = {'bofa': 'bank-of-america', 'amex': 'american-express'}[account['issuer']]
         for card in self.owner.cards:
             if card['id'] in self.owner.profile['wallet'] and card['issuerId'] in (expected, 'custom'):
