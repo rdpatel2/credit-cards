@@ -172,3 +172,14 @@ def test_compact_window_keeps_preferences_usable(window, app):
         assert window.navigation[page].isChecked()
     for control in (window.points, window.max_fee, window.target):
         assert control.lineEdit().height() >= control.fontMetrics().height()
+
+
+def test_full_bank_name_finds_customized_cash_and_dated_sources(window):
+    window.search.setText('Bank of America customized cash rewards card')
+    assert 'bank-of-america-customized-cash-rewards' in {c['id'] for c in window.explored}
+    window.show_card(window.by_id['bank-of-america-customized-cash-rewards'])
+    sources = window.detail_browsers['Sources'].toPlainText()
+    assert 'Issuer terms checked 2026-10-07' in sources
+    assert 'Issuer domain' in sources
+    assert '6%' in sources
+    assert 'excluded' in sources

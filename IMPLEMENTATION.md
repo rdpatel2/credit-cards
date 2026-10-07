@@ -58,3 +58,10 @@ Validation: all 58 tests pass. The dashboard and statement review were visually 
 
 1. Shared controls: searchable category dropdowns with case-insensitive substring suggestions, valid-selection checks, and scroll-safe dropdown/numeric/date controls. Search also filters the category lists in Card settings without removing saved selections.
 2. Validation and documentation: keyboard completion, invalid text rejection, unfinished purchase override guards, focused/unfocused wheel checks, and preserved keyboard changes. All 63 tests pass. The rebuilt Linux executable passes its desktop and statement smoke checks.
+
+## Catalog discovery and source review · `fix/catalog-source-verification`
+
+1. Search and provenance: normalize names and word order, support common issuer aliases, avoid searching reference URLs as product features, label source domains, record the dated BOFA issuer check, and correct its unnecessary standing-category activation gate.
+2. Validation and audit: refresh into a temporary directory, audit all 188 cards and 445 unique source links, record HTTP results without treating them as term verification, and test discovery, source display, provenance, and reward selection. All 69 tests pass. The rebuilt Linux package passes its desktop and PDF smoke checks.
+
+The source review and full machine-readable report are in `docs/source-review.md` and `docs/source-audit.json`. Only the specified BOFA terms were independently checked against issuer pages; the broad catalog audit checks provenance and link availability. The BOFA introductory earning boost remains excluded from numeric estimates and is explicitly shown as a limitation.
