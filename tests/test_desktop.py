@@ -4,7 +4,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QTimer, Qt
+from PySide6.QtTest import QTest
 from card_compass.app import MainWindow, STYLE, CardSettings
 from card_compass.catalog import read_json
 
@@ -53,8 +54,8 @@ def test_search_details_and_remove(window):
     assert window.catalog_table.rowCount() == 1
     window.catalog_table.selectRow(0)
     assert window.current_card["id"] == "chase-freedom-unlimited"
-    assert "Published signup offers" in window.details.toPlainText()
-    assert "Offers reviewed by source" in window.details.toPlainText()
+    assert "Published signup offers" in window.offer_details.toPlainText()
+    assert "Offers reviewed by source" in window.offer_details.toPlainText()
     window.add_wallet_card()
     window.wallet.setCurrentRow(0)
     window.remove_wallet_card()
@@ -107,3 +108,67 @@ def test_successful_background_refresh_reloads_cards_and_keeps_profile(window, a
     assert window.spend_widgets["dining"].value() == 100
     assert (window.directory / "catalog.json").exists()
     assert window.refresh_button.isEnabled()
+
+
+def test_sidebar_navigation_and_spending_updates(window, app):
+    window.show()
+    assert not window.setup.isHidden()
+    assert window.hero.isHidden()
+    assert window.recommendations.isHidden()
+    QTest.mouseClick(window.navigation['spending'], Qt.MouseButton.LeftButton)
+    assert window.active_page == 'spending'
+    window.spend_widgets['dining'].setValue(400)
+    QTest.qWait(350)
+    assert read_json(window.directory / 'profile.json')['spend']['dining'] == 400
+    QTest.mouseClick(window.navigation['matches'], Qt.MouseButton.LeftButton)
+    assert not window.hero.isHidden()
+    assert not window.recommendations.isHidden()
+    assert window.setup.isHidden()
+    assert window.monthly_metric.value.text() == '$400'
+    QTest.mouseClick(window.hero_button, Qt.MouseButton.LeftButton)
+    assert window.current_card['id'] == window.matches[0]['card']['id']
+    assert window.details_dialog.isVisible()
+
+
+def test_closed_details_stay_closed_and_reopen_from_keyboard(window, app):
+    window.show()
+    window.navigate('explore')
+    window.search.setText('freedom unlimited')
+    window.catalog_table.selectRow(0)
+    assert window.details_dialog.isVisible()
+    window.detail_tabs.setCurrentIndex(1)
+    window.details_dialog.close()
+    window.recalculate()
+    assert not window.details_dialog.isVisible()
+    window.catalog_table.setFocus()
+    QTest.keyClick(window.catalog_table, Qt.Key.Key_Return)
+    assert window.details_dialog.isVisible()
+    # Refreshing the same card preserves the tab the user is reading.
+    assert window.detail_tabs.currentIndex() == 1
+    QTest.keyClick(window.details_dialog, Qt.Key.Key_Escape)
+    assert not window.details_dialog.isVisible()
+
+
+def test_catalog_issuer_filter_and_no_results(window):
+    window.issuer_filter.setCurrentIndex(window.issuer_filter.findData('chase'))
+    assert window.explored and all(c['issuerId'] == 'chase' for c in window.explored)
+    window.search.setText('no-such-card-123')
+    assert window.catalog_table.rowCount() == 0
+    assert not window.search_empty.isHidden()
+    window.search.clear()
+    assert window.catalog_table.rowCount() > 0
+    assert window.search_empty.isHidden()
+
+
+def test_compact_window_keeps_preferences_usable(window, app):
+    window.resize(1040, 720)
+    window.show()
+    app.processEvents()
+    assert window.width() == 1040
+    for page in window.page_indexes:
+        window.navigate(page)
+        app.processEvents()
+        assert window.pages.currentIndex() == window.page_indexes[page]
+        assert window.navigation[page].isChecked()
+    for control in (window.points, window.max_fee, window.target):
+        assert control.lineEdit().height() >= control.fontMetrics().height()
