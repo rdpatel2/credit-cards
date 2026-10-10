@@ -144,11 +144,22 @@ class WidgetFrame(QFrame):
         self.body_layout.setContentsMargins(0, 0, 0, 0)
         self.body_layout.setSpacing(4)
         layout.addWidget(self.body, 1)
+        footer_row = QWidget()
+        footer_layout = QHBoxLayout(footer_row)
+        footer_layout.setContentsMargins(0,0,0,0)
         self.footer = QLabel('')
         self.footer.setObjectName('muted')
         self.footer.setFixedHeight(28)
         self.footer.setWordWrap(False)
-        layout.addWidget(self.footer)
+        footer_layout.addWidget(self.footer,1)
+        self.refresh_button = QPushButton('Refresh')
+        self.refresh_button.setObjectName('rowAction')
+        self.refresh_button.setAccessibleName('Refresh ' + block['title'])
+        self.refresh_button.clicked.connect(lambda: self.command.emit(self.ident, 'refresh'))
+        footer_layout.addWidget(self.refresh_button)
+        footer_row.setFixedHeight(32)
+        layout.addWidget(footer_row)
+        self.footer_text = ''
         self.component = None
         self.factory = component_factory
         self.build_component()
@@ -167,6 +178,8 @@ class WidgetFrame(QFrame):
         try:
             self.component = self.factory(self)
             self.body_layout.addWidget(self.component)
+            if getattr(self.component, 'last_error', None):
+                raise RuntimeError(self.component.last_error)
         except Exception as exc:
             self.show_error(exc)
 
@@ -181,6 +194,8 @@ class WidgetFrame(QFrame):
             item = self.body_layout.takeAt(0)
             if item.widget():
                 item.widget().hide()
+                item.widget().deleteLater()
+        self.component = None
         error = QLabel('This widget could not load. Your other widgets are still available.')
         error.setWordWrap(True)
         error.setToolTip(str(exc))
@@ -188,7 +203,12 @@ class WidgetFrame(QFrame):
         retry = QPushButton('Retry widget')
         retry.clicked.connect(self.retry)
         self.body_layout.addWidget(retry)
-        self.footer.setText('Widget error · retry to reload')
+        self.set_footer('Widget error · retry to reload')
+
+    def set_footer(self, message):
+        self.footer_text = message
+        self.footer.setToolTip(message)
+        self.footer.setText(self.footer.fontMetrics().elidedText(message, Qt.TextElideMode.ElideRight, max(30,self.footer.width())))
 
     def retry(self):
         while self.body_layout.count():
@@ -204,6 +224,8 @@ class WidgetFrame(QFrame):
         self.title.setText(('⠿  ' if self.header.enabled else '🔒  ' if locked else '') + self.block['title'])
         self.body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, editing)
         self.body.setEnabled(not editing)
+        if self.component:
+            self.component.isEditing = editing
         for handle in self.handles.values():
             handle.enabled = editing and not locked
             handle.setVisible(handle.enabled)
@@ -214,6 +236,7 @@ class WidgetFrame(QFrame):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.set_footer(self.footer_text)
         if hasattr(self, 'handles'):
             self.handles['right'].setGeometry(self.width() - 7, 45, 7, max(0, self.height() - 58))
             self.handles['bottom'].setGeometry(8, self.height() - 7, max(0, self.width() - 24), 7)

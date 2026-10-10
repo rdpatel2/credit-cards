@@ -69,8 +69,8 @@ def test_resize_keyboard_and_footer_are_separate(canvas):
     g=next(g for g in canvas.current_layout if g['i']=='a')
     assert g['w']==7 and g['h']==31
     frame=canvas.frames['a']
-    assert frame.body.geometry().bottom() < frame.footer.geometry().top()
-    assert frame.footer.geometry().bottom() < frame.height()
+    assert frame.body.geometry().bottom() < frame.footer.parentWidget().geometry().top()
+    assert frame.footer.parentWidget().geometry().bottom() < frame.height()
 
 
 def test_widget_construction_error_is_isolated():

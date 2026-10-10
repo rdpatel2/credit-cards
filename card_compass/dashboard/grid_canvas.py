@@ -70,7 +70,7 @@ class GridCanvas(QGraphicsView):
         self.current_layout = deepcopy(layout)
         blocks = {w['id']: w for w in dashboard['widgets']}
         for ident in list(self.items):
-            if ident not in blocks or changed:
+            if ident not in blocks or changed or self.frames[ident].block['type'] != blocks[ident]['type']:
                 proxy = self.items.pop(ident)
                 self.frames.pop(ident)
                 self.scene().removeItem(proxy)
@@ -326,6 +326,10 @@ class GridCanvas(QGraphicsView):
             self.current_layout = deepcopy(dashboard_layout(self.dashboard, key))
             self.breakpointChanged.emit(key)
         self.apply_layout(self.current_layout)
+
+    def hideEvent(self,event):
+        if self.interaction:self.cancel()
+        super().hideEvent(event)
 
     def drawBackground(self, painter, rect):
         super().drawBackground(painter, rect)
