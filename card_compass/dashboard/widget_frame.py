@@ -230,6 +230,11 @@ class WidgetFrame(QFrame):
             handle.enabled = editing and not locked
             handle.setVisible(handle.enabled)
 
+    def set_density(self,density):
+        padding=8 if density=='compact' else 12
+        self.layout().setContentsMargins(padding,6,padding,6)
+        self.header.setFixedHeight(32 if density=='compact' else 38)
+
     def announce(self, message):
         self.setAccessibleDescription(message)
         QAccessible.updateAccessibility(QAccessibleAnnouncementEvent(self.header, message))

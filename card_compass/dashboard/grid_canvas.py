@@ -13,6 +13,7 @@ class GridCanvas(QGraphicsView):
     breakpointChanged = Signal(str)
     command = Signal(str, str)
     announced = Signal(str)
+    widgetDropped = Signal(str, str, int, int)
 
     def __init__(self, component_factory, parent=None, engine=ENGINE):
         super().__init__(parent)
@@ -25,6 +26,7 @@ class GridCanvas(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFrameShape(self.Shape.NoFrame)
         self.setAcceptDrops(True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         self.frames, self.items, self.animations = {}, {}, {}
         self.dashboard = None
         self.size_key = breakpoint(self.viewport().width())
@@ -34,6 +36,7 @@ class GridCanvas(QGraphicsView):
         self.margin = 8
         self.gap = 12
         self.reduced_motion = False
+        self.gallery_drop = None
         self.placeholder = QGraphicsRectItem()
         self.placeholder.setZValue(90)
         self.placeholder.setPen(QPen(QColor('#4a9eff'), 2, Qt.PenStyle.DashLine))
@@ -123,6 +126,7 @@ class GridCanvas(QGraphicsView):
             proxy = self.items[ident]
             rect = self.rect_for(g)
             proxy.resize(rect.size())
+            self.frames[ident].set_density(self.dashboard.get('settings',{}).get('density','comfortable'))
             destination = rect.topLeft()
             old_animation = self.animations.pop(ident, None)
             if old_animation:
@@ -330,6 +334,37 @@ class GridCanvas(QGraphicsView):
     def hideEvent(self,event):
         if self.interaction:self.cancel()
         super().hideEvent(event)
+
+    def dragEnterEvent(self,event):
+        from .gallery import WIDGET_MIME
+        from .widget_registry import REGISTRY
+        kind=bytes(event.mimeData().data(WIDGET_MIME)).decode(errors='replace')
+        if kind in REGISTRY.definitions and kind!='unknown':
+            self.gallery_drop=kind
+            event.acceptProposedAction()
+        else:event.ignore()
+
+    def dragMoveEvent(self,event):
+        if not self.gallery_drop:event.ignore();return
+        from .widget_registry import REGISTRY
+        point=self.mapToScene(event.position().toPoint())
+        definition=REGISTRY.get(self.gallery_drop)
+        g=dict(i='__gallery__',x=round((point.x()-self.margin)/self.column_width),y=max(0,round((point.y()-self.margin)/ROW_UNIT)),
+               w=12 if self.size_key=='xs' else definition.defaultSize[0],h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1])
+        layout=self.engine.move([*self.current_layout,g],g['i'],g,self.dashboard.get('settings',{}).get('compact',True))
+        self.placeholder.setRect(self.rect_for(next(g for g in layout if g['i']=='__gallery__')))
+        self.placeholder.show()
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self,event):
+        self.gallery_drop=None;self.placeholder.hide();event.accept()
+
+    def dropEvent(self,event):
+        if not self.gallery_drop:event.ignore();return
+        point=self.mapToScene(event.position().toPoint());kind=self.gallery_drop
+        self.gallery_drop=None;self.placeholder.hide()
+        self.widgetDropped.emit(kind,self.size_key,round((point.x()-self.margin)/self.column_width),max(0,round((point.y()-self.margin)/ROW_UNIT)))
+        event.acceptProposedAction()
 
     def drawBackground(self, painter, rect):
         super().drawBackground(painter, rect)

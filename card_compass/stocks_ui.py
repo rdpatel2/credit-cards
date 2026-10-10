@@ -20,6 +20,9 @@ from .dashboard.layout_engine import ENGINE, dashboard_layout
 from .dashboard.layout_store import LayoutStore
 from .dashboard.data_layer import DataLayer
 from .dashboard.widget_registry import REGISTRY, ConfigPanel, money, numeric
+from .dashboard.gallery import WidgetGallery
+from .dashboard.tools import DashboardSettings, STARTERS, starter
+from .dashboard.schema import normalize_dashboard
 
 
 class ViewSettingsDialog(QDialog):
@@ -123,6 +126,7 @@ class DashboardPanel(QWidget):
         self.canvas.layoutChanged.connect(lambda size,geometry:owner.layout_changed(self,size,geometry))
         self.canvas.command.connect(lambda ident,command:owner.widget_command(self,ident,command))
         self.canvas.announced.connect(owner.announce)
+        self.canvas.widgetDropped.connect(lambda kind,size,x,y:owner.add_block(kind,self,(size,x,y)))
         layout.addWidget(self.canvas)
 
 
@@ -178,7 +182,11 @@ class StocksPage(QWidget):
         self.dashboards.currentIndexChanged.connect(self.choose_dashboard);controls.addWidget(self.dashboards,1)
         create=QPushButton('New dashboard');create.clicked.connect(self.new_dashboard);controls.addWidget(create)
         self.dashboard_tools=QPushButton('Dashboard tools');self.tools_menu=QMenu(self.dashboard_tools)
-        for label,handler in [('Rename',self.rename_dashboard),('Delete',self.delete_dashboard)]:self.tools_menu.addAction(label,handler)
+        for label,handler in [('Rename',self.rename_dashboard),('Duplicate dashboard',self.duplicate_dashboard),
+            ('Move dashboard earlier',lambda:self.reorder_dashboard(-1)),('Move dashboard later',lambda:self.reorder_dashboard(1)),
+            ('Dashboard settings…',self.dashboard_settings),('Reset layout',self.reset_layout),
+            ('Export dashboard JSON…',self.export_dashboard),('Import dashboard JSON…',self.import_dashboard),
+            ('Save as template…',self.save_template),('Apply template…',self.apply_template),('Delete',self.delete_dashboard)]:self.tools_menu.addAction(label,handler)
         self.dashboard_tools.setMenu(self.tools_menu);controls.addWidget(self.dashboard_tools)
         add=QPushButton('Add widget');add.clicked.connect(self.add_widget);controls.addWidget(add)
         self.edit_layout=QCheckBox('Edit layout');self.edit_layout.toggled.connect(self.set_editing);controls.addWidget(self.edit_layout)
@@ -251,6 +259,8 @@ class StocksPage(QWidget):
         for p in self.store.state['pages']:self.dashboards.addItem(p['name'],p['id'])
         self.dashboards.setCurrentIndex(max(0,self.dashboards.findData(self.current_page()['id'])));self.dashboards.blockSignals(False)
         for panel in self.panels():self.render_panel(panel)
+        for panel in (self.dashboard_page,self.watchlist_page,self.history_page,self.news_page):
+            self.tabs.setTabText(self.tabs.indexOf(panel),self.dashboard_for(panel)['name'])
         self.data_layer.notify_local();self.render_metrics();self.apply_view_settings();self.update_history()
     def render_dashboard(self):self.render_panel(self.tabs.currentWidget())
     def layout_changed(self,panel,size,layout):
@@ -299,7 +309,7 @@ class StocksPage(QWidget):
                 values=dialog.values()
                 self.layout_store.mutate('Configure '+block['title'],lambda state:next(w for w in self.dashboard_for(panel,state)['widgets'] if w['id']==ident).__setitem__('config',values));return
             except ValueError as exc:dialog.error.setText(str(exc))
-    def add_block(self,kind,panel=None):
+    def add_block(self,kind,panel=None,placement=None):
         panel=panel or self.tabs.currentWidget();definition=REGISTRY.get(kind);block=widget(kind)
         def add(state):
             dashboard=self.dashboard_for(panel,state)
@@ -307,12 +317,20 @@ class StocksPage(QWidget):
             block['config']['watchlistId']=state['watchlists'][0]['id'];dashboard['widgets'].append(block)
             for key,layout in dashboard['layouts'].items():
                 width=12 if key=='xs' else definition.defaultSize[0]
-                dashboard['layouts'][key]=ENGINE.insert(layout,dict(i=block['id'],x=0,y=0,w=width,h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1]),dashboard['settings']['compact'])
+                x,y=(placement[1],placement[2]) if placement and placement[0]==key else (0,0)
+                geometry=dict(i=block['id'],x=x,y=y,w=width,h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1])
+                if placement and placement[0]==key:
+                    dashboard['layouts'][key]=ENGINE.move([*layout,geometry],block['id'],geometry,dashboard['settings']['compact'])
+                else:
+                    dashboard['layouts'][key]=ENGINE.insert(layout,ENGINE.first_free(layout,geometry),dashboard['settings']['compact'])
         self.layout_store.mutate('Add '+definition.title,add)
         return block['id']
     def add_widget(self):
-        title,ok=QInputDialog.getItem(self,'Add widget','Widget',[d.title for d in REGISTRY.definitions.values() if d.type!='unknown'],0,False)
-        if ok:self.add_block(next(d.type for d in REGISTRY.definitions.values() if d.title==title))
+        if not hasattr(self,'gallery'):
+            self.gallery=WidgetGallery(self.data_layer,self)
+            self.gallery.selected.connect(self.add_block)
+            self.gallery.dragging.connect(lambda:self.edit_layout.setChecked(True))
+        self.gallery.show();self.gallery.raise_();self.gallery.activateWindow()
     def remove_widget(self,ident,panel=None):
         panel=panel or self.tabs.currentWidget()
         def remove(state):
@@ -367,6 +385,74 @@ class StocksPage(QWidget):
             ident=uuid.uuid4().hex
             self.layout_store.mutate('Create dashboard',lambda state:state['pages'].append(page(ident,name.strip(),[])))
             self.page_id=ident;self.tabs.setCurrentWidget(self.dashboard_page);self.reload()
+    def duplicate_dashboard(self):
+        source=deepcopy(self.current_page());ident=uuid.uuid4().hex
+        def duplicate(state):
+            dashboard=deepcopy(source);dashboard.update(id=ident,name=source['name']+' copy')
+            state['pages'].append(dashboard)
+            for block in dashboard['widgets']:
+                source_key=('stock-'+self.selected_symbol if self.stock_view else source['id'])+':'+block['id']
+                state['notes'][ident+':'+block['id']]=state['notes'].get(source_key,'')
+        self.layout_store.mutate('Duplicate dashboard',duplicate)
+        self.page_id=ident;self.tabs.setCurrentWidget(self.dashboard_page);self.reload()
+        return ident
+    def reorder_dashboard(self,delta):
+        ident=self.current_page()['id']
+        def reorder(state):
+            pages=state['pages'];index=next((i for i,p in enumerate(pages) if p['id']==ident),None)
+            if index is None:return
+            destination=max(0,min(len(pages)-1,index+delta));pages.insert(destination,pages.pop(index))
+        self.layout_store.mutate('Reorder dashboards',reorder)
+    def set_dashboard_settings(self,settings):
+        def change(state):
+            dashboard=self.current_page(state);dashboard['settings'].update(settings)
+            for key,layout in dashboard['layouts'].items():dashboard['layouts'][key]=ENGINE.repair(layout,dashboard['settings']['compact'])
+        self.layout_store.mutate('Dashboard settings',change)
+    def dashboard_settings(self):
+        dialog=DashboardSettings(self.current_page()['settings'],self)
+        if dialog.exec()==QDialog.DialogCode.Accepted:self.set_dashboard_settings(dialog.values())
+    def reset_layout(self):
+        def reset(state):
+            dashboard=self.current_page(state);geometry=[]
+            for index,block in enumerate(dashboard['widgets']):
+                definition=REGISTRY.get(block['type']);width=definition.defaultSize[0]
+                geometry=ENGINE.insert(geometry,dict(i=block['id'],x=0,y=0,w=width,h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1]),True)
+            dashboard['layouts']={key:ENGINE.derive(geometry,key) for key in ('lg','md','sm','xs')}
+        self.layout_store.mutate('Reset layout',reset)
+    def export_dashboard(self):
+        path,_=QFileDialog.getSaveFileName(self,'Export dashboard','dashboard.json','JSON files (*.json)')
+        if path:
+            try:write_json(Path(path),dict(schemaVersion=2,dashboard=self.current_page()))
+            except OSError as exc:self.status.setText('Export failed: '+str(exc))
+    def import_dashboard_data(self,raw):
+        if raw.get('schemaVersion',2) not in (1,2):raise ValueError('Unsupported dashboard version.')
+        dashboard=normalize_dashboard(raw.get('dashboard',raw),legacy=raw.get('schemaVersion')==1)
+        if not dashboard['widgets']:raise ValueError('The file contains no widget blocks.')
+        dashboard['id']=uuid.uuid4().hex
+        self.layout_store.mutate('Import dashboard',lambda state:state['pages'].append(dashboard))
+        self.page_id=dashboard['id'];self.tabs.setCurrentWidget(self.dashboard_page);self.reload()
+        return dashboard['id']
+    def import_dashboard(self):
+        path,_=QFileDialog.getOpenFileName(self,'Import as new dashboard','','JSON files (*.json)')
+        if path:
+            try:
+                if Path(path).stat().st_size>1_000_000:raise ValueError('Dashboard exceeds 1 MB.')
+                self.import_dashboard_data(json.loads(Path(path).read_text()))
+            except (ValueError,OSError,TypeError,KeyError) as exc:self.status.setText('Import failed: '+str(exc))
+    def save_template(self):
+        name,ok=QInputDialog.getText(self,'Save as template','Template name',text=self.current_page()['name'])
+        if ok and name.strip():
+            template=deepcopy(self.current_page());template['name']=name.strip()
+            self.layout_store.mutate('Save template',lambda state:state['templates'].__setitem__(uuid.uuid4().hex,template))
+    def apply_template_data(self,template):
+        def apply(state):
+            dashboard=self.current_page(state);ident,name=dashboard['id'],dashboard['name']
+            dashboard.clear();dashboard.update(normalize_dashboard(template));dashboard.update(id=ident,name=name)
+        self.layout_store.mutate('Apply template',apply)
+    def apply_template(self):
+        saved=list(self.store.state['templates'].values());names=[*STARTERS,*[p['name'] for p in saved]]
+        name,ok=QInputDialog.getItem(self,'Apply template','Replaces blocks; Undo restores your previous layout.',names,0,False)
+        if ok:self.apply_template_data(starter(name) if name in STARTERS else next(p for p in saved if p['name']==name))
     def rename_dashboard(self):
         dashboard=self.current_page();name,ok=QInputDialog.getText(self,'Rename dashboard','Name',text=dashboard['name'])
         if ok and name.strip():self.layout_store.mutate('Rename dashboard',lambda state:self.current_page(state).__setitem__('name',name.strip()))

@@ -41,6 +41,8 @@ class LayoutEngine(Protocol):
     def move(self, layout, ident, values, compact=True): ...
     def split(self, layout, ident, target, side, compact=True): ...
     def derive(self, layout, target): ...
+    def insert(self, layout, item, compact=True): ...
+    def first_free(self, layout, item): ...
 
 
 class GridLayoutEngine:
@@ -98,12 +100,20 @@ class GridLayoutEngine:
         neighbor = next(g for g in items if g['i'] == target)
         if source['locked'] or neighbor['locked']:
             return self.move(items, ident, dict(x=neighbor['x'], y=neighbor['y'] + neighbor['h']), compact)
+        if source['minW'] + neighbor['minW'] > 12:
+            return self.move(items, ident, dict(x=neighbor['x'],y=neighbor['y']+neighbor['h']),compact)
         total = min(12, max(neighbor['w'], source['minW'] + neighbor['minW']))
         start = min(neighbor['x'], 12 - total)
         source_w = max(source['minW'], min(total // 2, total - neighbor['minW']))
         neighbor_w = total - source_w
         source.update(x=start if side == 'left' else start + neighbor_w, y=neighbor['y'], w=source_w)
         neighbor.update(x=start + source_w if side == 'left' else start, w=neighbor_w)
+        source.update(clamp(source));neighbor.update(clamp(neighbor))
+        obstacles=[g for g in items if g['locked']]
+        while any(intersects(member,obstacle) for member in (source,neighbor) for obstacle in obstacles):
+            hits=[obstacle for obstacle in obstacles if any(intersects(member,obstacle) for member in (source,neighbor))]
+            y=max(g['y']+g['h'] for g in hits)
+            source['y']=neighbor['y']=y
         # Both split members form the anchor; other blocks flow around them.
         placed = [g for g in items if g['locked']] + [source, neighbor]
         for other in sorted((g for g in items if g not in placed), key=lambda g: (g['y'], g['x'], g['i'])):
@@ -116,9 +126,16 @@ class GridLayoutEngine:
     def insert(self, layout, item, compact=True):
         items = self.repair(layout, compact)
         item = clamp(item)
-        item['y'] = 0
         self._push(item, items)
         return self.repair([*items, item], compact)
+
+    def first_free(self,layout,item):
+        candidate=clamp(item)
+        for y in sorted({0,*[g['y']+g['h'] for g in layout]}):
+            for x in range(13-candidate['w']):
+                candidate.update(x=x,y=y)
+                if not any(intersects(candidate,g) for g in layout):return candidate
+        raise ValueError('Dashboard is full.')
 
     def derive(self, layout, target):
         items = deepcopy(layout)
