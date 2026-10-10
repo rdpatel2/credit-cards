@@ -29,6 +29,7 @@ class GridCanvas(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFrameShape(self.Shape.NoFrame)
         self.setAcceptDrops(True)
+        self.setMouseTracking(True)
         self.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         self.frames, self.items, self.animations = {}, {}, {}
         self.dashboard = None

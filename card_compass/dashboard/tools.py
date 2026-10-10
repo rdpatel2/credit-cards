@@ -1,6 +1,7 @@
 """Dashboard settings and reusable, data-independent starter templates."""
 from copy import deepcopy
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QSpinBox, QDialogButtonBox
+from PySide6.QtWidgets import QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QSpinBox, QDialogButtonBox
+from ..ui import FitDialog as QDialog
 from ..investments import page
 from .widget_registry import REGISTRY
 from .layout_engine import ENGINE

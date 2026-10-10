@@ -5,4 +5,10 @@ __pycache__/
 build/
 dist/
 *.spec
+!FinanceCompass.spec
 feed_sample.json
+stocks/node_modules/
+stocks/.next/
+stocks/test-results/
+stocks/playwright-report/
+stocks/tsconfig.tsbuildinfo

@@ -2,9 +2,10 @@
 from copy import deepcopy
 from PySide6.QtCore import Qt, QMimeData, Signal
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QListWidget,
+from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QLineEdit, QListWidget,
     QListWidgetItem, QLabel, QPushButton, QWidget, QAbstractItemView)
 from ..investments import widget
+from ..ui import FitDialog as QDialog
 from .widget_frame import WidgetFrame
 from .widget_registry import REGISTRY, create_widget
 

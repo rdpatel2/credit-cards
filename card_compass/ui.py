@@ -1,15 +1,97 @@
 """Desktop presentation primitives: scalable card artwork and a shared theme."""
 import hashlib
 
-from PySide6.QtCore import Qt, QRectF, QSize, Signal, QPointF
+from PySide6.QtCore import Qt, QRectF, QSize, Signal, QPoint, QPointF, QDate, QEvent
 from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient, QPen, QIcon, QPixmap, QPalette, QPixmapCache
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget, QComboBox, QDoubleSpinBox, QDateEdit, QCompleter
+from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QStyledItemDelegate, QStyle, QListWidget, QComboBox, QDoubleSpinBox, QDateEdit, QCompleter, QHBoxLayout, QPushButton, QSpinBox, QAbstractSpinBox, QDialog, QDialogButtonBox, QFormLayout, QLayout, QScrollArea, QSizePolicy, QAbstractItemView
+
+
+class FitDialog(QDialog):
+    """Keep form text readable and actions reachable on smaller screens."""
+    def available_dialog_size(self):
+        return self.screen().availableGeometry().adjusted(16,32,-16,-16).size()
+
+    def prepare_text_layout(self):
+        # A maximized window is sized by the window manager. Applying a smaller
+        # screen cap here makes Qt continually undo and reapply that geometry.
+        if self.isMaximized() or self.isFullScreen() or getattr(self,'_fitting_text',False):return
+        self._fitting_text=True
+        try:self._prepare_text_layout()
+        finally:self._fitting_text=False
+
+    def _prepare_text_layout(self):
+        for form in self.findChildren(QFormLayout):
+            if form.rowWrapPolicy()!=QFormLayout.RowWrapPolicy.WrapLongRows:
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+            alignment=Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter
+            if form.labelAlignment()!=alignment:form.setLabelAlignment(alignment)
+        labels=[]
+        for label in self.findChildren(QLabel):
+            parent=label.parentWidget()
+            while parent and parent is not self:
+                if isinstance(parent,(QAbstractItemView,QComboBox,QAbstractSpinBox)) or parent.metaObject().className()=='WidgetFrame':break
+                parent=parent.parentWidget()
+            if parent is not self or label.maximumHeight()<16777215:continue
+            if not label.wordWrap():label.setWordWrap(True)
+            policy=label.sizePolicy()
+            if policy.horizontalPolicy()!=QSizePolicy.Policy.Preferred or policy.verticalPolicy()!=QSizePolicy.Policy.Minimum:
+                label.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Minimum)
+            labels.append(label)
+        layout=self.layout()
+        if not layout:return
+        layout.activate()
+        for label in labels:
+            required=max(0,label.heightForWidth(label.width()))
+            if label.minimumHeight()!=required:label.setMinimumHeight(required)
+        limit=self.available_dialog_size()
+        # Explicit minimum sizes must not put dialog actions below the screen.
+        self.setMinimumSize(min(self.minimumWidth(),limit.width()),min(self.minimumHeight(),limit.height()))
+        minimum=layout.totalMinimumSize()
+        if (minimum.width()>limit.width() or minimum.height()>limit.height()) and not hasattr(self,'text_scroll'):
+            footer=None
+            last=layout.itemAt(layout.count()-1)
+            if last and (isinstance(last.widget(),QDialogButtonBox) or last.layout() and last.layout().parent() is layout):
+                footer=layout.takeAt(layout.count()-1)
+                if footer.layout():footer.layout().setParent(None)
+            content=QWidget();content.setObjectName('scrollContent');content.setLayout(layout)
+            layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+            self.text_scroll=QScrollArea();self.text_scroll.setWidgetResizable(True);self.text_scroll.setWidget(content)
+            self.text_scroll.setMinimumSize(0,0)
+            root=QVBoxLayout(self);root.addWidget(self.text_scroll,1)
+            if footer:
+                if footer.widget():root.addWidget(footer.widget())
+                else:root.addLayout(footer.layout())
+            self.setMinimumSize(0,0)
+        target=self.size().expandedTo(self.minimumSizeHint()).boundedTo(limit)
+        if self.size()!=target:self.resize(target)
+
+    def showEvent(self,event):
+        self.prepare_text_layout();super().showEvent(event)
+        if self.isMaximized() or self.isFullScreen():return
+        bounds=self.screen().availableGeometry()
+        frame=self.frameGeometry()
+        dx=max(bounds.left()-frame.left(),min(0,bounds.right()-frame.right()))
+        dy=max(bounds.top()-frame.top(),min(0,bounds.bottom()-frame.bottom()))
+        if dx or dy:self.move(self.pos()+QPoint(dx,dy))
+
+    def event(self,event):
+        if event.type()==QEvent.Type.LayoutRequest and self.isVisible():self.prepare_text_layout()
+        return super().event(event)
 
 
 class ScrollSafeComboBox(QComboBox):
     def wheelEvent(self, event):
         event.ignore()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Text), 1.6))
+        x, y = self.width() - 16, self.height() / 2
+        painter.drawLine(QPointF(x - 4, y - 2), QPointF(x, y + 2))
+        painter.drawLine(QPointF(x, y + 2), QPointF(x + 4, y - 2))
 
 
 class ScrollSafeDoubleSpinBox(QDoubleSpinBox):
@@ -20,6 +102,73 @@ class ScrollSafeDoubleSpinBox(QDoubleSpinBox):
 class ScrollSafeDateEdit(QDateEdit):
     def wheelEvent(self, event):
         event.ignore()
+
+
+class MonthPicker(QWidget):
+    """Month dropdown and year with visible previous/next controls."""
+    dateChanged = Signal(QDate)
+
+    def __init__(self, date, parent=None):
+        super().__init__(parent)
+        self._date = QDate()
+        self.minimum = QDate(1900, 1, 1)
+        self.maximum = QDate(2200, 12, 1)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.previous = QPushButton('‹')
+        self.next = QPushButton('›')
+        for button, name, offset in ((self.previous, 'Previous month', -1), (self.next, 'Next month', 1)):
+            button.setObjectName('monthArrow')
+            button.setFixedWidth(32)
+            button.setAccessibleName(name)
+            button.setToolTip(name)
+            button.clicked.connect(lambda checked=False, step=offset: self.setDate(self.date().addMonths(step)))
+        self.months = ScrollSafeComboBox()
+        self.months.setAccessibleName('Month')
+        for month in range(1, 13):
+            self.months.addItem(QDate(2000, month, 1).toString('MMMM'), month)
+        self.year = QSpinBox()
+        self.year.setRange(1900, 2200)
+        self.year.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.year.setAccessibleName('Year')
+        self.year.setFixedWidth(80)
+        for field in (self.previous, self.months, self.year, self.next):
+            layout.addWidget(field)
+        self.months.currentIndexChanged.connect(self.selected)
+        self.year.valueChanged.connect(self.selected)
+        self.setDate(date if date.isValid() else QDate.currentDate())
+
+    def selected(self, *_):
+        self.setDate(QDate(self.year.value(), self.months.currentData(), 1))
+
+    def date(self):
+        return self._date
+
+    def setDate(self, date):
+        if not date.isValid():
+            return
+        date = max(self.minimum, min(self.maximum, QDate(date.year(), date.month(), 1)))
+        changed = date != self._date
+        self._date = date
+        self.months.blockSignals(True)
+        self.year.blockSignals(True)
+        self.months.setCurrentIndex(date.month() - 1)
+        self.year.setValue(date.year())
+        self.months.blockSignals(False)
+        self.year.blockSignals(False)
+        self.previous.setEnabled(date > self.minimum)
+        self.next.setEnabled(date < self.maximum)
+        if changed:
+            self.dateChanged.emit(date)
+
+    def setMinimumDate(self, date):
+        self.minimum = QDate(date.year(), date.month(), 1)
+        self.setDate(self.date())
+
+    def setMaximumDate(self, date):
+        self.maximum = QDate(date.year(), date.month(), 1)
+        self.setDate(self.date())
 
 
 class SearchableCategoryBox(ScrollSafeComboBox):
@@ -72,6 +221,7 @@ QLabel#sideStatus { color: #b4cdc4; font-size: 11px; }
 QPushButton#nav { color: #b4cdc4; background: transparent; border: none; border-radius: 8px; text-align: left; padding: 13px 16px; font-size: 13px; }
 QPushButton#nav:hover { background: #1a3e34; color: #ffffff; }
 QPushButton#nav:checked { background: #254b3e; color: #ccf5df; font-weight: 600; }
+QPushButton#nav[navLevel="child"] { padding: 7px 12px; }
 QPushButton#sideRefresh { background: #1a3e34; color: #d9eee5; border: 1px solid #355348; }
 QLabel#pageTitle { font-size: 29px; font-weight: 700; color: #183a2d; }
 QLabel#sectionTitle { font-size: 17px; font-weight: 600; color: #183a2d; }
@@ -87,6 +237,8 @@ QFrame#surface, QFrame#stat { background: #ffffff; border: 1px solid #e1e8e2; bo
 QFrame#hero { background: #edf4ed; border: 1px solid #dce8dd; border-radius: 14px; }
 QFrame#empty { background: #ffffff; border: 1px solid #e1e8e2; border-radius: 14px; }
 QPushButton { background: #ffffff; border: 1px solid #d8e1da; border-radius: 7px; padding: 10px 17px; color: #334e40; font-weight: 500; }
+QPushButton#monthArrow { padding: 3px; font-size: 24px; font-weight: 600; }
+QPushButton#rowAction { padding: 6px 10px; }
 QPushButton:hover { background: #eef4ef; border-color: #b5cbbb; }
 QPushButton#categoryTile { background: #ffffff; border: 1px solid #d8e1da; border-radius: 12px; text-align: left; padding: 0; }
 QPushButton#categoryTile:hover { background: #eef5ef; border-color: #7b9e89; }
@@ -98,9 +250,11 @@ QPushButton#primary:disabled { background: #dce6df; color: #52665a; border-color
 QPushButton#quiet { background: transparent; border: none; color: #236347; padding: 8px; }
 QPushButton:disabled { color: #52665a; background: #edf1ee; border-color: #edf1ee; }
 QPushButton:focus, QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QDateEdit:focus { border: 1px solid #398161; }
-QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QDateEdit { color: #233d38; background: #ffffff; border: 1px solid #dce4dd; border-radius: 7px; padding: 10px 12px; selection-background-color: #236347; selection-color: #ffffff; }
+QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QDateEdit { color: #233d38; background: #ffffff; border: 1px solid #dce4dd; border-radius: 7px; padding: 10px 12px; min-height: 20px; selection-background-color: #236347; selection-color: #ffffff; }
+QAbstractSpinBox QLineEdit, QComboBox QLineEdit { padding: 0; border: none; border-radius: 0; min-height: 0; background: transparent; }
 QComboBox QAbstractItemView { color: #233d38; background: #ffffff; selection-background-color: #236347; selection-color: #ffffff; border: 1px solid #7b9484; }
 QComboBox::drop-down { border: none; width: 28px; }
+QComboBox::down-arrow { image: none; }
 QDoubleSpinBox { min-width: 85px; }
 QTableWidget { background: #ffffff; alternate-background-color: #ffffff; border: 1px solid #e1e8e2; border-radius: 10px; gridline-color: #edf1ee; }
 QTableWidget::item { padding: 12px 16px; border-bottom: 1px solid #edf1ee; }
@@ -118,6 +272,8 @@ QTabWidget::pane { background: #ffffff; border: 1px solid #e1e8e2; border-radius
 QTabBar::tab { color: #52665a; background: transparent; padding: 12px 16px; border-bottom: 2px solid transparent; }
 QTabBar::tab:selected { color: #194f38; background: #e6f2e9; border-bottom: 2px solid #236347; }
 QScrollArea { border: none; background: transparent; }
+QSplitter::handle { background: #dce8dd; border: 1px solid #7b9484; border-radius: 4px; margin: 2px 30px; }
+QSplitter::handle:hover { background: #236347; }
 QScrollBar:vertical { background: transparent; width: 7px; margin: 3px 0; }
 QScrollBar::handle:vertical { background: #7b9484; border-radius: 3px; min-height: 35px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
@@ -148,9 +304,9 @@ def light_palette():
     for name, value in colors.items():
         palette.setColor(getattr(QPalette.ColorRole, name), QColor(value))
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
-        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor('#52665a'))
-    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Button, QColor('#edf1ee'))
-    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Base, QColor('#edf1ee'))
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(theme_color('#52665a')))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Button, QColor(theme_color('#edf1ee')))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Base, QColor(theme_color('#edf1ee')))
     return palette
 
 
@@ -203,10 +359,16 @@ class Metric(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(7)
-        layout.addWidget(text(caption.upper(), "eyebrow"))
+        self.caption = text(caption.upper(), "eyebrow")
+        layout.addWidget(self.caption)
         self.value = text("—", "statValue")
         layout.addWidget(self.value)
-        layout.addWidget(text(description, "muted", True))
+        self.description = text(description, "muted", True)
+        layout.addWidget(self.description)
+
+    def set_compact(self):
+        self.layout().setContentsMargins(12, 8, 12, 8)
+        self.layout().setSpacing(3)
 
 
 def paint_artwork(painter, rect, pixmap):
@@ -293,6 +455,9 @@ class CardArt(QWidget):
 CARD_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+from .theme import color as theme_color
+
+
 class CardDelegate(QStyledItemDelegate):
     """Paint identities directly so long catalogs don't need hundreds of widgets."""
     def __init__(self, parent=None, artwork=None):
@@ -311,14 +476,14 @@ class CardDelegate(QStyledItemDelegate):
         rect = QRectF(option.rect)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        background = QColor('#edf5ee' if selected else '#f5f9f6' if hovered else '#ffffff')
+        background = QColor(theme_color('#edf5ee' if selected else '#f5f9f6' if hovered else '#ffffff'))
         if isinstance(option.widget, QListWidget):
             p.setBrush(background)
-            p.setPen(QPen(QColor('#98b6a1' if selected else '#e1e8e2'), 1))
+            p.setPen(QPen(QColor(theme_color('#98b6a1' if selected else '#e1e8e2')), 1))
             p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 12, 12)
         else:
             p.fillRect(rect, background)
-            p.setPen(QPen(QColor('#edf1ee'), 1))
+            p.setPen(QPen(QColor(theme_color('#edf1ee')), 1))
             p.drawLine(rect.bottomLeft(), rect.bottomRight())
         art = QRectF(rect.left() + 18, rect.center().y() - 40, 128, 80)
         font = QFont(option.font)
@@ -346,13 +511,13 @@ class CardDelegate(QStyledItemDelegate):
         font.setPixelSize(14)
         font.setWeight(QFont.Weight.DemiBold)
         p.setFont(font)
-        p.setPen(QColor('#233d38'))
+        p.setPen(QColor(theme_color('#233d38')))
         p.drawText(QRectF(left, rect.center().y() - 20, width, 23), Qt.AlignmentFlag.AlignLeft,
                    p.fontMetrics().elidedText(card['name'], Qt.TextElideMode.ElideRight, width))
         font.setPixelSize(11)
         font.setWeight(QFont.Weight.Normal)
         p.setFont(font)
-        p.setPen(QColor('#52665a'))
+        p.setPen(QColor(theme_color('#52665a')))
         p.drawText(QRectF(left, rect.center().y() + 6, width, 20), Qt.AlignmentFlag.AlignLeft,
                    p.fontMetrics().elidedText(card['issuerId'].replace('-', ' ').title(), Qt.TextElideMode.ElideRight, width))
         p.restore()

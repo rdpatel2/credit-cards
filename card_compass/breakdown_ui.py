@@ -1,9 +1,10 @@
 """Native spending rankings and charts for the saved transaction ledger."""
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QTabWidget, QTableWidgetItem
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QTabWidget, QTableWidgetItem, QPushButton, QMessageBox
 
 from .breakdown import spending_breakdown
+from .theme import color as theme_color
 from .import_ui import amount, category_label, grid
 from .ui import Metric, ScrollSafeComboBox, surface, text
 
@@ -23,7 +24,7 @@ class SpendBars(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor('#4d6256'))
+        painter.setPen(QColor(theme_color('#4d6256')))
         if not self.items:
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, 'No positive net spending in this selection.')
             return
@@ -36,14 +37,14 @@ class SpendBars(QWidget):
             top = index * 44
             money = amount(value)
             money_width = painter.fontMetrics().horizontalAdvance(money) + 12
-            painter.setPen(QColor('#233d38'))
+            painter.setPen(QColor(theme_color('#233d38')))
             painter.drawText(QRectF(0, top, max(0, width - money_width), 20),
                              painter.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, max(1, width - money_width)))
             painter.drawText(QRectF(width - money_width, top, money_width, 20), Qt.AlignmentFlag.AlignRight, money)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor('#e6f2e9'))
+            painter.setBrush(QColor(theme_color('#e6f2e9')))
             painter.drawRoundedRect(QRectF(0, top + 25, width, 7), 3, 3)
-            painter.setBrush(QColor('#236347'))
+            painter.setBrush(QColor(theme_color('#236347')))
             painter.drawRoundedRect(QRectF(0, top + 25, width * value / maximum, 7), 3, 3)
 
 
@@ -57,9 +58,10 @@ class BreakdownPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
+        content.setObjectName('scrollContent')
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 10, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(10)
         filters = QHBoxLayout()
         filters.addWidget(text('Period', 'muted'))
         self.period = ScrollSafeComboBox()
@@ -70,16 +72,19 @@ class BreakdownPage(QWidget):
         self.card = ScrollSafeComboBox()
         filters.addWidget(self.card, 1)
         layout.addLayout(filters)
+        self.period.setToolTip('Breakdown uses its own date selection, separate from your monthly budget.')
         metrics = QHBoxLayout()
         self.net = Metric('Net spending', 'Purchases minus refunds')
         self.purchases = Metric('Purchases', 'Before refunds')
         self.refunds = Metric('Refunds', 'Deducted from spending')
         for metric in (self.net, self.purchases, self.refunds):
+            metric.set_compact()
             metrics.addWidget(metric, 1)
         layout.addLayout(metrics)
         self.summary = text('', 'muted', True)
         layout.addWidget(self.summary)
-        charts = QHBoxLayout()
+        chart_panel = QWidget()
+        charts = QHBoxLayout(chart_panel)
         self.category_bars, self.merchant_bars = SpendBars(), SpendBars()
         for title, chart in [('Top spending categories', self.category_bars), ('Top merchants', self.merchant_bars)]:
             frame = surface()
@@ -88,18 +93,28 @@ class BreakdownPage(QWidget):
             inside.addWidget(text(title, 'sectionTitle'))
             inside.addWidget(chart)
             charts.addWidget(frame, 1)
-        layout.addLayout(charts)
-        tabs = QTabWidget()
+        tabs = self.tabs = QTabWidget()
         self.tables = {}
         for key, title, heading in [('categories', 'Categories', 'CATEGORY'), ('merchants', 'Merchants', 'MERCHANT'),
                                     ('cards', 'Cards', 'CARD'), ('months', 'Monthly trend', 'MONTH')]:
             table = grid([heading, 'NET SPEND', 'PURCHASES', 'REFUNDS', 'SHARE OF PURCHASES'])
-            table.setMinimumHeight(230)
+            table.setMinimumHeight(130)
             tabs.addTab(table, title)
             self.tables[key] = table
-        layout.addWidget(tabs)
-        layout.addWidget(text('Based on imported transactions dated in the selected period. Payments, fees, interest, transfers, and reward credits are excluded. Share is each group’s portion of purchases before refunds; rankings and bars use net spending. Missing statement periods are not estimated.', 'muted', True))
-        layout.addWidget(text(f'Transactions saved locally: {self.ledger.path}', 'muted', True))
+            table.itemDoubleClicked.connect(lambda item, k=key: self.open_purchases(k, item.row()))
+            table.itemSelectionChanged.connect(self.update_drill_action)
+        tabs.addTab(chart_panel, 'Charts')
+        layout.addWidget(tabs, 1)
+        self.drill_button = QPushButton('View purchases in selected group')
+        self.drill_button.setEnabled(False)
+        self.drill_button.clicked.connect(self.open_selected)
+        tabs.currentChanged.connect(self.update_drill_action)
+        actions = QHBoxLayout()
+        actions.addWidget(self.drill_button, 1)
+        help_button = QPushButton('How totals work…')
+        help_button.clicked.connect(lambda: QMessageBox.information(self, 'Spending breakdown', 'These are actual purchases minus refunds by transaction date, within the filters above. Payments, fees, interest, transfers and reward credits are excluded. Share is the portion of purchases before refunds. Missing months are not estimated.\n\nDouble-click a group to see its purchases.\n\nSaved locally: ' + str(self.ledger.path)))
+        actions.addWidget(help_button)
+        layout.addLayout(actions)
         scroll.setWidget(content)
         outer.addWidget(scroll)
         self.period.currentIndexChanged.connect(self.render)
@@ -149,5 +164,22 @@ class BreakdownPage(QWidget):
                 values = [name, amount(row['net_cents']), amount(row['purchases_cents']), amount(row['refunds_cents']), f"{row['purchase_share']:.1%}"]
                 for col, value in enumerate(values):
                     item = QTableWidgetItem(value)
+                    item.setData(Qt.ItemDataRole.UserRole, row['key'])
                     item.setToolTip(name + f" · {row['count']} purchases and refunds")
                     table.setItem(index, col, item)
+        self.update_drill_action()
+
+    def update_drill_action(self, *_):
+        if hasattr(self, 'drill_button'):
+            table = self.tabs.currentWidget()
+            self.drill_button.setEnabled(table in self.tables.values() and table.currentRow() >= 0)
+
+    def open_selected(self):
+        key = next((key for key, table in self.tables.items() if table is self.tabs.currentWidget()), None)
+        if key:
+            self.open_purchases(key, self.tables[key].currentRow())
+
+    def open_purchases(self, key, row):
+        item = self.tables[key].item(row, 0)
+        if item:
+            self.owner.imports_page.show_group(key, item.data(Qt.ItemDataRole.UserRole), item.text(), self.period.currentData(), self.card.currentData())

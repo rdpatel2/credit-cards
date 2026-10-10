@@ -18,6 +18,7 @@ class DataLayer(QObject):
         self.failures, self.pending, self.loading, self.requested, self.loaded_at = {}, set(), set(), set(), {}
         self.subscriptions,self.permanent={},set()
         self.worker = None
+        self.mode=self.state.get('dataMode','auto');self.generation=0
         self.stopping = False
         self.queue_timer = QTimer(self)
         self.queue_timer.setSingleShot(True)
@@ -54,6 +55,7 @@ class DataLayer(QObject):
         return 'stale' if value and value.get('stale') else 'ready' if value else 'empty'
 
     def subscribe(self, requirements, owner=None):
+        self.ensure_mode()
         if owner is None:self.permanent.update(requirements)
         else:self.subscriptions[owner]=set(requirements)
         self.update_requested()
@@ -78,6 +80,7 @@ class DataLayer(QObject):
         if due:self.refresh(due)
 
     def refresh(self, requirements=None):
+        self.ensure_mode()
         requirements = set(self.requested if requirements is None else requirements)
         if not self.network_enabled and self.state.get('dataMode') != 'demo':
             self.message.emit('Offline session · reconnect, then Refresh to load public data.')
@@ -99,13 +102,22 @@ class DataLayer(QObject):
         self.loading.update(tasks)
         if self.worker:self.worker.deleteLater()
         self.worker = MarketWorker(tasks, self.state.get('dataMode', 'auto'), self)
-        self.worker.result.connect(self.result)
-        self.worker.failed.connect(self.failed)
+        generation=self.generation
+        self.worker.result.connect(lambda kind,key,value:self.result(kind,key,value) if generation==self.generation else None)
+        self.worker.failed.connect(lambda kind,key,message:self.failed(kind,key,message) if generation==self.generation else None)
         self.worker.finished.connect(self.finished)
         for kind, key in tasks:
             self.loaded_at[(kind,key)]=time.monotonic()
             self.changed.emit(kind + ':' + key)
         self.worker.start()
+
+    def ensure_mode(self):
+        mode=self.state.get('dataMode','auto')
+        if mode==self.mode:return
+        self.mode=mode;self.generation+=1
+        self.loading.clear();self.pending.clear();self.loaded_at.clear();self.failures.clear()
+        if self.worker and self.worker.isRunning():self.worker.requestInterruption()
+        if self.network_enabled or mode=='demo':self.pending.update(self.requested)
 
     def result(self, kind, key, value):
         self.cache[kind + ':' + key] = value

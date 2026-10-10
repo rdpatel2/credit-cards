@@ -1,0 +1,213 @@
+.metric-picker {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 0;
+}
+.metric-picker legend {
+  font-size: 12px;
+  padding: 0 6px;
+}
+.metric-actions {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+.metric-checkboxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.metric-checkboxes label {
+  font-size: 11px;
+}
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.metrics-grid > div {
+  padding: 14px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.metrics-grid dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+.metrics-grid dd {
+  margin: 0;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+.sector-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 22px;
+}
+.sector-tabs button {
+  padding: 8px 12px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+}
+.sector-tabs button:hover {
+  color: var(--text);
+  border-color: var(--subtle);
+}
+.sector-tabs button.active {
+  color: var(--green);
+  background: #98d9ae13;
+  border-color: var(--green);
+}
+.news-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 0;
+}
+.news-controls input {
+  flex: 1;
+  min-width: 170px;
+  font-size: 12px;
+}
+.news-controls .segmented {
+  margin: 0;
+  min-width: 220px;
+}
+.news-controls .segmented button {
+  font-size: 11px;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+.news-coverage-note {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 8px 0 18px;
+}
+.news-demo-note {
+  font-size: 11px;
+  color: var(--amber);
+  margin: 10px 0 18px;
+}
+.market-articles.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 14px;
+}
+.market-article {
+  display: block;
+  padding: 19px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+}
+.market-article:hover {
+  border-color: var(--green);
+  background: var(--panel-hover);
+}
+.article-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--subtle);
+  font-size: 9px;
+  line-height: 1.6;
+}
+.article-meta > span {
+  color: var(--green);
+}
+.market-article h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.7;
+  margin: 13px 0 20px;
+}
+.market-article h3 svg {
+  color: var(--subtle);
+  margin-top: 6px;
+}
+.article-sectors {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.article-sectors span {
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 7px;
+  font-size: 9px;
+}
+.market-articles.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.market-articles.list .market-article {
+  padding: 13px 18px;
+}
+.market-articles.list h3 {
+  margin: 7px 0 10px;
+  font-size: 13px;
+}
+.news-sector-group {
+  margin-bottom: 24px;
+}
+.news-sector-group > h3 {
+  margin: 5px 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.news-sector-group > h3 span {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.news-more {
+  margin-top: 20px;
+}
+.react-grid-item.react-draggable-dragging {
+  box-shadow: 0 8px 40px #0005;
+  opacity: 0.88;
+}
+@media (max-width: 760px) {
+  .sector-tabs {
+    gap: 5px;
+  }
+  .sector-tabs button {
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+  .news-controls {
+    gap: 8px;
+  }
+  .news-controls input {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .news-controls .segmented {
+    flex: 1;
+  }
+  .metric-checkboxes {
+    grid-template-columns: 1fr;
+  }
+  .metrics-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+  .market-article h3 {
+    font-size: 13px;
+  }
+}

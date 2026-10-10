@@ -7,7 +7,7 @@ import uuid
 from PySide6.QtCore import Qt, QDate, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
- QTabWidget, QDialog, QDialogButtonBox, QFormLayout, QDateEdit, QSpinBox, QFileDialog,
+ QTabWidget, QDialogButtonBox, QFormLayout, QDateEdit, QSpinBox, QFileDialog,
  QInputDialog, QMessageBox, QCheckBox, QLabel, QMenu, QFrame, QSizePolicy)
 from .catalog import write_json
 from .investments import WIDGETS, METRICS, RANGES, widget, page, symbol, position, simulate_sale, validate_workspace, VIEW_COLUMNS, validate_view_settings
@@ -23,6 +23,7 @@ from .dashboard.widget_registry import REGISTRY, create_widget, money
 from .dashboard.gallery import WidgetGallery
 from .dashboard.tools import DashboardSettings, STARTERS, starter
 from .dashboard.schema import normalize_dashboard
+from .ui import FitDialog as QDialog
 
 
 class StatusLabel(QLabel):
@@ -439,7 +440,7 @@ class StocksPage(QWidget):
         from .dashboard.widget_frame import WidgetFrame
         config=deepcopy(panel.canvas.frames[ident].block['config']);block['config']=config
         frame=WidgetFrame(block,lambda f:self.create_component(f,panel));layout.addWidget(frame)
-        dialog.showMaximized();dialog.exec();dialog.deleteLater()
+        dialog.setWindowState(Qt.WindowState.WindowMaximized);dialog.exec();dialog.deleteLater()
     def new_dashboard(self):
         name,ok=QInputDialog.getText(self,'New dashboard','Name')
         if ok and name.strip():
@@ -577,7 +578,11 @@ class StocksPage(QWidget):
     def trade_rows(self):return self.ledger_component.trade_rows if hasattr(self,'ledger_component') else []
     def selected_ticker(self):
         row=self.watchlist_table.currentRow();return self.watchlist_table.item(row,0).text() if row>=0 else None
-    def selected_watchlist(self,ident=None):return next((w for w in self.store.state['watchlists'] if w['id']==(ident or self.watchlists.currentData())),self.store.state['watchlists'][0])
+    def selected_watchlist(self,ident=None):
+        if ident is None:
+            try:ident=self.watchlists.currentData()
+            except (AttributeError,RuntimeError):pass
+        return next((w for w in self.store.state['watchlists'] if w['id']==ident),self.store.state['watchlists'][0])
     def new_watchlist(self):
         if len(self.store.state['watchlists'])>=20:self.status.setText('Limit: 20 watchlists.');return
         name,ok=QInputDialog.getText(self,'New watchlist','Name')
@@ -671,7 +676,7 @@ class StocksPage(QWidget):
         self.flush_notes();path,_=QFileDialog.getSaveFileName(self,'Export investments','investments-workspace.json','JSON files (*.json)')
         if path:write_json(Path(path),self.store.state)
     def shutdown(self):self.layout_store.flush();self.data_layer.shutdown()
-    def record_trade(self,ticker=None,row=None):
+    def record_trade(self,ticker=None,row=None,watchlist_id=None):
         if not isinstance(ticker,str):
             ticker,ok=QInputDialog.getText(self,'Record trade','Ticker',text=self.selected_symbol)
             if not ok:return
@@ -680,7 +685,7 @@ class StocksPage(QWidget):
         dialog=TradeDialog(self,ticker,row)
         while dialog.exec()==QDialog.DialogCode.Accepted:
             try:
-                self.store.trade(ticker,dialog.values());self.reload();self.owner.refresh_investment_summary();return
+                self.store.trade(ticker,dialog.values(),watchlist_id=self.selected_watchlist(watchlist_id)['id']);self.reload();self.owner.refresh_investment_summary();return
             except (ValueError,OSError) as exc:dialog.error.setText(str(exc))
     def selected_trade(self):
         index=self.trade_table.currentRow()

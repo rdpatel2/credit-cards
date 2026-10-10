@@ -50,6 +50,25 @@ def test_grouped_first_import_and_second_import_memory(owner):
     second.reject()
 
 
+def test_transactions_use_available_width_and_align_dates_and_amounts(owner):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QHeaderView
+    from PySide6.QtTest import QTest
+    review=dialog(owner);review.card.setCurrentIndex(1)
+    for _,category,_ in review.merchant_widgets.values():category.setCurrentIndex(category.findData('dining'))
+    review.confirm.setChecked(True);review.commit()
+    page=owner.imports_page;page.reload();owner.resize(1380,900);owner.show();owner.navigate('imports');QTest.qWait(20)
+    table=page.transactions
+    assert table.horizontalHeader().sectionResizeMode(0)==QHeaderView.ResizeMode.Stretch
+    assert table.columnWidth(0)>400
+    assert table.item(0,1).textAlignment() & Qt.AlignmentFlag.AlignHCenter
+    assert table.item(0,2).textAlignment() & Qt.AlignmentFlag.AlignRight
+    assert table.item(0,2).toolTip() and table.item(0,0).toolTip()
+    page.extra_columns.setChecked(True);QTest.qWait(5)
+    assert not table.isColumnHidden(4) and not table.isColumnHidden(5)
+    assert table.horizontalHeader().length()>=table.viewport().width()-2
+
+
 def test_cancel_import_does_not_save_merchant_choices(owner):
     review = dialog(owner)
     review.card.setCurrentIndex(1)

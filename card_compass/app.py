@@ -7,14 +7,14 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QDate
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QCheckBox, QGridLayout,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QTextBrowser,
-    QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QFormLayout,
-    QMessageBox, QProgressBar, QAbstractItemView, QScrollArea, QStackedWidget, QAbstractSpinBox,
+    QListWidget, QListWidgetItem, QDialogButtonBox, QFormLayout,
+    QMessageBox, QProgressBar, QAbstractItemView, QScrollArea, QStackedWidget, QAbstractSpinBox, QMenu, QFileDialog,
 )
 
 from .catalog import CatalogStore, data_dir, load_profile, write_json, read_json, SOURCE
@@ -25,8 +25,13 @@ from .search import matches_card
 from .discovery import GROUPS, discoverable, card_groups
 from .artwork import ArtworkCache
 from .source_audit import source_kind
+from .finance import FinanceStore
+from .finance_ui import FinancePage
+from .stocks_ui import StocksPage
+from .investments import InvestmentStore
+from .theme import color as theme_color, themed, stylesheet as theme_stylesheet, palette as theme_palette
 
-from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox
+from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox, FitDialog as QDialog
 
 SOURCE_REVIEWS = Path(__file__).parent / "data" / "source_reviews.json"
 
@@ -235,12 +240,15 @@ class MainWindow(QMainWindow):
     def __init__(self, directory: Path | None = None, auto_refresh=True):
         super().__init__()
         self.setPalette(light_palette())
-        self.setWindowTitle("Card Compass")
+        self.setWindowTitle("Finance Compass")
         self.resize(1380, 900)
         self.setMinimumSize(1040, 720)
         self.directory = directory or data_dir()
         self.store = CatalogStore(self.directory)
         self.profile = load_profile(self.directory)
+        self.finance_store = FinanceStore(self.directory)
+        self.investment_store = InvestmentStore(self.directory)
+        QApplication.instance().setProperty('financeTheme', self.profile.get('theme', 'light'))
         self.catalog = self.store.load()
         self.worker = None
         self.closing = False
@@ -248,13 +256,14 @@ class MainWindow(QMainWindow):
         self.artwork = ArtworkCache(self.directory, self, network_enabled=auto_refresh)
         self.build_ui()
         self.reload_cards()
+        self.apply_theme(self.profile.get('theme') == 'dark', persist=False)
         self.update_freshness()
         self.recalculate()
         if auto_refresh:
             QTimer.singleShot(0, self.refresh)
 
     def build_ui(self):
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(theme_stylesheet(STYLE, self.profile.get('theme') == 'dark'))
         root = QWidget()
         root.setObjectName('canvas')
         self.setCentralWidget(root)
@@ -265,7 +274,7 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName('sidebar')
         sidebar.setMinimumWidth(200)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(16, 28, 16, 24)
+        side.setContentsMargins(16, 16, 16, 12)
         side.setSpacing(8)
         brand = QHBoxLayout()
         mark = QLabel()
@@ -273,17 +282,33 @@ class MainWindow(QMainWindow):
         brand.addWidget(mark)
         brand_text = QVBoxLayout()
         brand_text.setSpacing(1)
-        brand_text.addWidget(text('Card Compass', 'brand'))
-        brand_text.addWidget(text('MAKE ROOM FOR BETTER.', 'brandTag'))
+        brand_text.addWidget(text('Finance Compass', 'brand'))
+        brand_text.addWidget(text('YOUR MONEY, CONNECTED.', 'brandTag'))
         brand.addLayout(brand_text)
         side.addLayout(brand)
-        side.addSpacing(34)
+        side.addSpacing(12)
         side.addWidget(text('YOUR WORKSPACE', 'navSection'))
         side.addSpacing(8)
         self.navigation = {}
-        for key, caption, glyph in [('explore', 'Dashboard', 'explore'), ('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
+        for key, caption, glyph in [('overview', 'Overview', 'explore'), ('budget', 'Budget && cash flow', 'spending'), ('stocks', 'Investments', 'matches'),
+                                    ('explore', 'Find cards', 'explore'), ('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
                                     ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'),
                                     ('breakdown', 'Breakdown', 'spending'), ('coverage', 'Coverage', 'coverage')]:
+            if key == 'explore':
+                self.cards_toggle = QPushButton('Credit cards')
+                self.cards_toggle.setObjectName('nav')
+                self.cards_toggle.setCheckable(True)
+                self.cards_toggle.setAutoExclusive(True)
+                self.cards_toggle.setIcon(icon('wallet'))
+                self.cards_toggle.setIconSize(QSize(19, 19))
+                self.cards_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.cards_toggle.clicked.connect(self.click_cards)
+                side.addWidget(self.cards_toggle)
+                self.credit_group = QWidget()
+                self.credit_layout = QVBoxLayout(self.credit_group)
+                self.credit_layout.setContentsMargins(20, 0, 0, 0)
+                self.credit_layout.setSpacing(4)
+                side.addWidget(self.credit_group)
             button = QPushButton(caption)
             button.setObjectName('nav')
             button.setCheckable(True)
@@ -292,10 +317,20 @@ class MainWindow(QMainWindow):
             button.setIconSize(QSize(19, 19))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, page=key: self.navigate(page))
-            side.addWidget(button)
+            if key in ('explore', 'matches', 'wallet', 'spending', 'imports', 'breakdown', 'coverage'):
+                button.setProperty('navLevel', 'child')
+                self.credit_layout.addWidget(button)
+            else:
+                side.addWidget(button)
             self.navigation[key] = button
         side.addStretch()
-        prefs = QPushButton('Preferences')
+        self.theme_toggle = QPushButton('Dark mode')
+        self.theme_toggle.setObjectName('sideRefresh')
+        self.theme_toggle.setCheckable(True)
+        self.theme_toggle.setChecked(self.profile.get('theme') == 'dark')
+        self.theme_toggle.toggled.connect(self.apply_theme)
+        side.addWidget(self.theme_toggle)
+        prefs = QPushButton('Card preferences')
         prefs.setObjectName('nav')
         prefs.setCheckable(True)
         prefs.setAutoExclusive(True)
@@ -303,6 +338,13 @@ class MainWindow(QMainWindow):
         prefs.clicked.connect(lambda: self.navigate('preferences'))
         self.navigation['preferences'] = prefs
         side.addWidget(prefs)
+        backup = QPushButton('Backup && restore')
+        backup.setObjectName('sideRefresh')
+        menu = QMenu(backup)
+        menu.addAction('Back up all my data…', self.backup_data)
+        menu.addAction('Restore a backup…', self.restore_data)
+        backup.setMenu(menu)
+        side.addWidget(backup)
         side.addSpacing(20)
         side.addWidget(text('CARD DATA', 'navSection'))
         self.freshness = text('', 'sideStatus', True)
@@ -321,16 +363,30 @@ class MainWindow(QMainWindow):
         side.addWidget(text('LOCAL PROFILE', 'navSection'))
         side.addWidget(text('Saved on this device', 'sideStatus'))
         side_scroll = QScrollArea()
-        side_scroll.setFixedWidth(220)
+        side_scroll.setFixedWidth(248)
         side_scroll.setWidgetResizable(True)
         side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         side_scroll.setWidget(sidebar)
-        shell.addWidget(side_scroll)
+        side_panel = QWidget()
+        side_panel.setObjectName('sidebar')
+        side_panel.setFixedWidth(248)
+        side_panel_layout = QVBoxLayout(side_panel)
+        side_panel_layout.setContentsMargins(0, 0, 0, 0)
+        side_panel_layout.setSpacing(0)
+        side_panel_layout.addWidget(side_scroll, 1)
+        fixed_actions = QWidget()
+        fixed_layout = QVBoxLayout(fixed_actions)
+        fixed_layout.setContentsMargins(16, 8, 16, 12)
+        for action in (self.theme_toggle, prefs, backup):
+            side.removeWidget(action)
+            fixed_layout.addWidget(action)
+        side_panel_layout.addWidget(fixed_actions)
+        shell.addWidget(side_panel)
 
         workspace = QWidget()
         workspace_layout = QVBoxLayout(workspace)
-        workspace_layout.setContentsMargins(30, 26, 30, 16)
-        workspace_layout.setSpacing(18)
+        workspace_layout.setContentsMargins(24, 18, 24, 12)
+        workspace_layout.setSpacing(12)
         heading = QHBoxLayout()
         titles = QVBoxLayout()
         titles.setSpacing(6)
@@ -343,12 +399,16 @@ class MainWindow(QMainWindow):
         self.tune_button.setIcon(icon('settings', '#236347', 17))
         self.tune_button.clicked.connect(lambda: self.navigate('preferences'))
         heading.addWidget(self.tune_button)
+        self.header_theme_toggle = QPushButton('Dark mode')
+        self.header_theme_toggle.setCheckable(True)
+        self.header_theme_toggle.toggled.connect(self.apply_theme)
+        heading.addWidget(self.header_theme_toggle)
         workspace_layout.addLayout(heading)
         self.pages = QStackedWidget()
         self.page_indexes = {}
         workspace_layout.addWidget(self.pages, 1)
         footer = QHBoxLayout()
-        footer.addWidget(text('US cards  ·  Estimates assume purchases are paid in full.', 'muted'))
+        footer.addWidget(text('Finance Compass  ·  Your monthly financial workspace', 'muted'))
         footer.addStretch()
         footer.addWidget(text('Your financial details stay on this device.', 'muted'))
         workspace_layout.addLayout(footer)
@@ -369,13 +429,14 @@ class MainWindow(QMainWindow):
         self.rewards_metric = Metric('Current annual rewards', 'Estimated from your existing wallet')
         self.gaps_metric = Metric('Categories to improve', 'Below your coverage target')
         for metric in (self.monthly_metric, self.rewards_metric, self.gaps_metric):
+            metric.set_compact()
             metrics.addWidget(metric, 1)
         matches.addLayout(metrics)
         self.hero = surface('hero')
         hero_layout = QHBoxLayout(self.hero)
-        hero_layout.setContentsMargins(20, 18, 20, 18)
-        hero_layout.setSpacing(24)
-        self.hero_art = CardArt(width=210, height=128, artwork=self.artwork)
+        hero_layout.setContentsMargins(20, 25, 20, 25)
+        hero_layout.setSpacing(36)
+        self.hero_art = CardArt(width=128, height=80, artwork=self.artwork)
         hero_layout.addWidget(self.hero_art)
         hero_info = QVBoxLayout()
         hero_info.setSpacing(6)
@@ -438,10 +499,26 @@ class MainWindow(QMainWindow):
         self.recommendations.setColumnWidth(1, 130)
         self.recommendations.setColumnWidth(2, 160)
         self.recommendations.setColumnWidth(3, 140)
-        self.recommendations.itemSelectionChanged.connect(self.select_recommendation)
-        self.recommendations.cellClicked.connect(lambda row, col: self.select_recommendation())
+        self.recommendations.cellDoubleClicked.connect(lambda row, col: self.select_recommendation())
         self.recommendations.itemActivated.connect(lambda item: self.select_recommendation())
         matches.addWidget(self.recommendations, 1)
+        match_actions = QHBoxLayout()
+        self.open_match = QPushButton('Open selected card')
+        self.open_match.clicked.connect(self.select_recommendation)
+        self.recommendations.itemSelectionChanged.connect(lambda: self.open_match.setEnabled(self.recommendations.currentRow() >= 0))
+        self.open_match.setEnabled(False)
+        match_actions.addWidget(self.open_match)
+        self.review_assumptions = QPushButton('Review card assumptions…')
+        self.review_assumptions.clicked.connect(self.show_assumptions)
+        match_actions.addWidget(self.review_assumptions)
+        calculation = QPushButton('How is this calculated?')
+        calculation.clicked.connect(self.show_match_calculation)
+        match_actions.addWidget(calculation)
+        matches.addLayout(match_actions)
+        self.matches_stale = QPushButton('Statement history changed · Update recommendation inputs…')
+        self.matches_stale.clicked.connect(lambda: self.imports_page.apply_spending())
+        self.matches_stale.hide()
+        matches.addWidget(self.matches_stale)
         self.match_empty = text('Enter monthly spending to get personalized recommendations.', 'muted', True)
         self.match_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         matches.addWidget(self.match_empty, 1)
@@ -495,7 +572,9 @@ class MainWindow(QMainWindow):
         intro.addWidget(self.spend_total)
         spending_layout.addWidget(spend_intro)
         self.spending = table(['SPENDING CATEGORY', 'MONTHLY SPEND', 'CURRENT COVERAGE'])
-        self.spending_sort_order = None
+        self.spending_sort_order = Qt.SortOrder.DescendingOrder
+        self.spending.horizontalHeader().setSortIndicator(1,self.spending_sort_order)
+        self.spending.horizontalHeader().setSortIndicatorShown(True)
         self.spending.horizontalHeader().setSectionsClickable(True)
         self.spending.horizontalHeader().sectionClicked.connect(self.sort_spending)
         self.spending.horizontalHeaderItem(1).setToolTip('Click to sort monthly spending, highest or lowest first.')
@@ -503,13 +582,14 @@ class MainWindow(QMainWindow):
         self.spending.setColumnWidth(2, 230)
         self.spend_widgets = {}
         self.coverage_widgets = {}
+        self.coverage_modes = {}
         categories = list(DEFAULT_CATEGORIES)
         categories += sorted(set(self.profile.get('spend', {})) - set(categories))
         for category in categories:
             self.add_spend_row(category)
         self.spending.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         spending_layout.addWidget(self.spending, 1)
-        spending_layout.addWidget(text('Coverage: 1% or below is red · above 1% and below 3% is yellow · 3% or above is green. Auto needs spending to calculate a rate.', 'muted', True))
+        spending_layout.addWidget(text('Auto finds your wallet’s effective rate. Manual uses your estimate. Green meets your coverage target; amber is below it; red means no rewards.', 'muted', True))
         spending_footer = QHBoxLayout()
         spending_footer.addWidget(text('Changes save automatically. Move portal and merchant purchases out of other buckets.', 'muted', True), 1)
         self.manage_one_off = QPushButton('Manage one-off transactions')
@@ -525,10 +605,12 @@ class MainWindow(QMainWindow):
         self.coverage_summary = text('', 'sectionTitle')
         coverage_layout.addWidget(self.coverage_summary)
         coverage_layout.addWidget(text('Highest spending first. Rates account for caps and the best way to use your existing cards.', 'muted', True))
-        self.coverage = table(['CATEGORY', 'MONTHLY SPEND', 'EFFECTIVE RATE', 'COVERAGE'])
+        self.coverage = table(['CATEGORY', 'MONTHLY SPEND', 'EFFECTIVE RATE', 'COVERAGE', 'CARD TO USE'])
         self.coverage.setColumnWidth(1, 170)
         self.coverage.setColumnWidth(2, 170)
         self.coverage.setColumnWidth(3, 140)
+        self.coverage.setColumnWidth(4, 240)
+        self.coverage.horizontalHeader().setMinimumSectionSize(130)
         coverage_layout.addWidget(self.coverage, 1)
         coverage_actions = QHBoxLayout()
         edit = QPushButton('Edit spending')
@@ -578,11 +660,12 @@ class MainWindow(QMainWindow):
             tile.setObjectName('categoryTile')
             tile.setAccessibleName('Browse ' + title + ' cards')
             tile.setCursor(Qt.CursorShape.PointingHandCursor)
-            tile.setMinimumHeight(166)
+            tile.setMinimumHeight(136)
             inner = QVBoxLayout(tile)
-            inner.setContentsMargins(20, 18, 20, 18)
-            inner.setSpacing(8)
+            inner.setContentsMargins(16, 12, 16, 12)
+            inner.setSpacing(6)
             mark = QLabel()
+            mark.setProperty('themeGlyph', glyph)
             mark.setPixmap(icon(glyph, '#236347', 25).pixmap(25, 25))
             inner.addWidget(mark)
             inner.addWidget(text(title, 'sectionTitle'))
@@ -614,10 +697,14 @@ class MainWindow(QMainWindow):
         self.catalog_table = table(['CARD', 'ANNUAL FEE'])
         self.catalog_table.setItemDelegateForColumn(0, CardDelegate(self.catalog_table, artwork=self.artwork))
         self.catalog_table.setColumnWidth(1, 180)
-        self.catalog_table.itemSelectionChanged.connect(self.select_catalog)
-        self.catalog_table.cellClicked.connect(lambda row, col: self.select_catalog())
+        self.catalog_table.cellDoubleClicked.connect(lambda row, col: self.select_catalog())
         self.catalog_table.itemActivated.connect(lambda item: self.select_catalog())
         explore_layout.addWidget(self.catalog_table, 1)
+        self.open_catalog = QPushButton('Open selected card')
+        self.open_catalog.clicked.connect(self.select_catalog)
+        self.open_catalog.setEnabled(False)
+        self.catalog_table.itemSelectionChanged.connect(lambda: self.open_catalog.setEnabled(self.catalog_table.currentRow() >= 0))
+        explore_layout.addWidget(self.open_catalog)
         self.search_empty = text('No cards found. Try a different name, benefit, or issuer.', 'muted')
         self.search_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.search_empty.hide()
@@ -660,19 +747,19 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.bonus)
         settings_layout.addWidget(text('Signup bonuses count only when your spending pace meets the published requirement. Alternative offers are compared separately.', 'muted', True))
         preferences.addWidget(settings_surface)
-        explanation = surface()
-        explanation_layout = QVBoxLayout(explanation)
-        explanation_layout.setContentsMargins(28, 24, 28, 24)
-        explanation_layout.addWidget(text('How to read your matches', 'sectionTitle'))
-        explanation_layout.addWidget(text('Ongoing value is the extra annual rewards a card adds to your wallet, after its fee. Year one also includes a first-year fee waiver and any counted signup bonus. Credits, interest, taxes, and approval odds are excluded.', 'muted', True))
-        explanation_layout.addSpacing(10)
-        explanation_layout.addWidget(text('Card data refreshes on startup. Download time and issuer review dates are different; check the published source before applying.', 'muted', True))
+        explanation = QPushButton('How to read your matches…')
+        explanation.clicked.connect(self.show_match_calculation)
         preferences.addWidget(explanation)
         preferences.addStretch()
         self.imports_page = ImportsPage(self)
         self.page_indexes['imports'] = self.pages.addWidget(self.imports_page)
         self.breakdown_page = BreakdownPage(self)
         self.page_indexes['breakdown'] = self.pages.addWidget(self.breakdown_page)
+        self.overview_page = FinancePage(self)
+        self.budget_page = FinancePage(self, budget=True)
+        self.stocks_page = StocksPage(self)
+        for key, widget in [('overview', self.overview_page), ('budget', self.budget_page), ('stocks', self.stocks_page)]:
+            self.page_indexes[key] = self.pages.addWidget(widget)
         self.build_details()
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -683,7 +770,51 @@ class MainWindow(QMainWindow):
         self.sort.currentTextChanged.connect(self.schedule_update)
         self.business.toggled.connect(self.schedule_update)
         self.bonus.toggled.connect(self.schedule_update)
-        self.navigate('explore')
+        self.toggle_cards(False)
+        self.navigate('overview')
+
+    def apply_theme(self, dark, persist=True):
+        app = QApplication.instance()
+        app.setProperty('financeTheme', 'dark' if dark else 'light')
+        self.profile['theme'] = 'dark' if dark else 'light'
+        style = theme_stylesheet(STYLE, dark)
+        if app.styleSheet() != style:
+            app.setStyleSheet(style)
+        if app.palette() != theme_palette(dark):
+            app.setPalette(theme_palette(dark))
+        if self.styleSheet() != style:
+            self.setStyleSheet(style)
+        self.setPalette(theme_palette(dark))
+        self.theme_toggle.blockSignals(True)
+        self.theme_toggle.setChecked(dark)
+        self.theme_toggle.setText('Dark mode · on' if dark else 'Dark mode · off')
+        self.theme_toggle.blockSignals(False)
+        self.header_theme_toggle.blockSignals(True)
+        self.header_theme_toggle.setChecked(dark)
+        self.header_theme_toggle.setText('Dark mode · on' if dark else 'Dark mode · off')
+        self.header_theme_toggle.blockSignals(False)
+        for browser in self.detail_browsers.values():
+            browser.document().setDefaultStyleSheet(themed('body { color: #334e40; } h3 { font-size: 17px; color: #183a2d; margin-top: 20px; } p { line-height: 150%; margin: 10px 0 16px; } a { color: #236347; } li { margin: 7px 0; }', dark))
+        for label_widget in self.findChildren(QLabel):
+            glyph = label_widget.property('themeGlyph')
+            if glyph:
+                label_widget.setPixmap(icon(glyph, theme_color('#236347'), 25).pixmap(25, 25))
+        if hasattr(self, 'cards') and persist:
+            self.recalculate()
+        for widget in self.findChildren(QWidget):
+            widget.update()
+        if persist:
+            self.save_profile()
+
+    def refresh_investment_summary(self):
+        if hasattr(self, 'overview_page'):
+            self.overview_page.reload()
+
+    def toggle_cards(self, expanded):
+        self.credit_group.setVisible(expanded)
+        self.cards_toggle.setText('Credit cards ▾' if expanded else 'Credit cards ▸')
+        for key in ('explore', 'matches', 'wallet', 'spending', 'imports', 'breakdown', 'coverage'):
+            self.navigation[key].setVisible(expanded)
 
     def build_details(self):
         self.details_dialog = QDialog(self)
@@ -740,16 +871,35 @@ class MainWindow(QMainWindow):
 
     def navigate(self, key):
         titles = {
-            'matches': ('Your next great card.', 'More rewards for the way you already spend.'),
-            'wallet': ('Your wallet.', 'The cards you have. The benefits you should know.'),
-            'spending': ('Make your spending count.', 'A little context goes a long way toward a better match.'),
-            'imports': ('Teach your wallet once.', 'Import statements, remember merchants, and build your purchase history.'),
-            'breakdown': ('Where your money goes.', 'Your largest spending categories and merchants, based on imported purchases.'),
-            'coverage': ('Find the gaps.', 'See where your wallet works hard — and where it could do more.'),
-            'explore': ('Find your next card.', 'Choose a reward category or search across active US credit cards.'),
+            'overview': ('Your finances, together.', 'Plan, spend, and invest with a clear view of your month.'),
+            'budget': ('Give every dollar a purpose.', 'Income, recurring bills, category budgets, and actual spending.'),
+            'stocks': ('Investments.', 'Your positions, modular dashboards, and research in one workspace.'),
+            'matches': ('Credit cards · matches.', 'Compare additional rewards against your saved wallet.'),
+            'wallet': ('Credit cards · wallet.', 'Your cards, benefits, and reward settings.'),
+            'spending': ('Credit cards · spending.', 'Monthly purchase estimates used for reward recommendations.'),
+            'imports': ('Credit cards · statements.', 'Import statements, categorize merchants, and review purchase history.'),
+            'breakdown': ('Credit cards · breakdown.', 'Actual spending by category, merchant, and month.'),
+            'coverage': ('Credit cards · coverage.', 'Compare wallet rewards with your coverage target.'),
+            'explore': ('Credit cards.', 'Choose a reward category or search across active US credit cards.'),
             'preferences': ('Your rules. Your rewards.', 'Fine-tune the assumptions behind your recommendations.'),
         }
         self.active_page = key
+        for nav_key, button in self.navigation.items():
+            if nav_key != key:
+                button.setAutoExclusive(False)
+                button.setChecked(False)
+                button.setAutoExclusive(True)
+        if key in ('explore', 'matches', 'wallet', 'spending', 'imports', 'breakdown', 'coverage'):
+            self.cards_toggle.setChecked(True)
+            self.toggle_cards(True)
+        else:
+            self.toggle_cards(False)
+            self.cards_toggle.setChecked(False)
+            for child_key in ('explore', 'matches', 'wallet', 'spending', 'imports', 'breakdown', 'coverage'):
+                child_button = self.navigation[child_key]
+                child_button.setAutoExclusive(False)
+                child_button.setChecked(False)
+                child_button.setAutoExclusive(True)
         self.pages.setCurrentIndex(self.page_indexes[key])
         self.navigation[key].setChecked(True)
         self.page_title.setText(titles[key][0])
@@ -759,6 +909,70 @@ class MainWindow(QMainWindow):
             self.search.setFocus()
         if key == 'breakdown':
             self.breakdown_page.reload()
+        if key in ('overview', 'budget'):
+            self.pages.currentWidget().reload()
+        if key == 'stocks' and self.artwork.network_enabled:
+            self.stocks_page.start()
+
+    def click_cards(self):
+        if self.credit_group.isVisible():
+            self.toggle_cards(False)
+            self.cards_toggle.setChecked(self.active_page in ('explore', 'matches', 'wallet', 'spending', 'imports', 'breakdown', 'coverage'))
+        else:
+            self.navigate('explore')
+
+    def set_finance_month(self, date):
+        date = QDate(date.year(), date.month(), 1)
+        self.profile['finance_month'] = date.toString('yyyy-MM')
+        for page in (self.overview_page, self.budget_page):
+            page.month.blockSignals(True)
+            page.month.setDate(date)
+            page.month.blockSignals(False)
+            page.reload()
+        self.save_profile()
+
+    def backup_data(self):
+        from .backup import create_backup
+        path, _ = QFileDialog.getSaveFileName(self, 'Back up all your data', 'finance-compass-backup.zip', 'Finance Compass backup (*.zip)')
+        if not path:
+            return
+        self.save_profile()
+        self.stocks_page.flush_notes()
+        try:
+            create_backup(self.directory, path)
+            QMessageBox.information(self, 'Backup saved', 'Saved budgets, income, wallet settings, statement history, investment trades, dashboards and notes. Keep this file somewhere you can find it again.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Could not save backup', str(exc))
+
+    def restore_data(self):
+        from .backup import read_backup, restore_backup
+        path, _ = QFileDialog.getOpenFileName(self, 'Restore all your data', '', 'Finance Compass backup (*.zip)')
+        if not path:
+            return
+        recovery = None
+        try:
+            manifest, _ = read_backup(path)
+            if QMessageBox.question(self, 'Replace current data?', f"Restore backup from {manifest.get('created', 'unknown date')}?\n\nThis replaces budgets, income, cards, statements and investments. A recovery backup of your current data will be kept. The workspace will reopen.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+            self.timer.stop()
+            self.save_profile()
+            self.stocks_page.shutdown()
+            recovery = restore_backup(self.directory, path)
+            replacement = MainWindow(self.directory, auto_refresh=self.artwork.network_enabled)
+            replacement.show()
+            QApplication.instance().setProperty('restoredWindow', replacement)
+            self.replacement_window = replacement
+            self.restoring = True
+            self.close()
+            QMessageBox.information(replacement, 'Backup restored', f'Your data is ready. Recovery copy of the previous data:\n{recovery}')
+        except Exception as exc:
+            if recovery is not None and not getattr(self, 'restoring', False):
+                try:
+                    restore_backup(self.directory, recovery)
+                except Exception as rollback_error:
+                    QMessageBox.warning(self, 'Recovery backup available', f'Restore could not complete. Your original data is backed up at {recovery}.\n{rollback_error}')
+            self.stocks_page.stopping = False
+            QMessageBox.warning(self, 'Could not restore backup', str(exc))
 
     def add_spend_row(self, category):
         row = self.spending.rowCount()
@@ -769,7 +983,7 @@ class MainWindow(QMainWindow):
         amount = spin(self.profile.get("spend", {}).get(category, 0), prefix="$ ")
         covered = spin(0, 100, suffix=" %")
         covered.setRange(-1, 100)
-        covered.setSpecialValueText("Auto")
+        covered.setSpecialValueText('—')
         covered.setValue(self.profile.get("coverage", {}).get(category, -1))
         amount.valueChanged.connect(self.manual_spending_changed)
         covered.valueChanged.connect(self.schedule_update)
@@ -777,14 +991,31 @@ class MainWindow(QMainWindow):
         monthly_item = QTableWidgetItem()
         monthly_item.setData(Qt.ItemDataRole.DisplayRole, amount.value())
         self.spending.setItem(row, 1, monthly_item)
-        self.spending.setCellWidget(row, 2, covered)
+        controls = QWidget()
+        row_layout = QHBoxLayout(controls)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        mode = ScrollSafeComboBox()
+        mode.addItems(['Auto', 'Manual'])
+        mode.setCurrentIndex(0 if covered.value() < 0 else 1)
+        mode.setMinimumWidth(90)
+        row_layout.addWidget(mode)
+        row_layout.addWidget(covered, 1)
+        covered.setEnabled(mode.currentIndex() == 1)
+        covered.setVisible(mode.currentIndex() == 1)
+        mode.currentIndexChanged.connect(lambda index, c=covered: (c.setValue(-1 if index == 0 else max(0, c.value())), c.setEnabled(index == 1), c.setVisible(index == 1)))
+        self.spending.setCellWidget(row, 2, controls)
         self.spend_widgets[category] = amount
         self.coverage_widgets[category] = covered
+        self.coverage_modes[category] = mode
         self.spending.setRowHeight(row, 64)
 
     def manual_spending_changed(self, *args):
         if not getattr(self, 'applying_imported_spending', False):
             self.profile['spending_source'] = 'manual'
+            self.profile['spending_stale'] = False
+            self.matches_stale.hide()
+            if hasattr(self, 'imports_page'):
+                self.imports_page.stale_button.hide()
         self.schedule_update()
 
     def update_spending_sort_values(self):
@@ -813,16 +1044,28 @@ class MainWindow(QMainWindow):
             spend = self.spend_widgets[category].value()
             automatic = widget.value() < 0
             rate = (baseline.category_rewards.get(category, 0) / (spend * 12) * 100 if spend else None) if automatic else widget.value()
-            widget.setSpecialValueText(f'Auto · {rate:.2f}%' if automatic and rate is not None else 'Auto')
-            band = 'unknown' if rate is None else 'low' if rate <= 1 + 1e-9 else 'high' if rate >= 3 - 1e-9 else 'medium'
+            widget.setSpecialValueText(f'{rate:.2f}%' if automatic and rate is not None else '—')
+            band = 'unknown' if rate is None else 'high' if rate + 1e-9 >= self.target.value() else 'low' if rate <= 0 else 'medium'
+            mode = self.coverage_modes[category]
+            mode.blockSignals(True)
+            mode.setItemText(0, f'Auto · {rate:.2f}%' if automatic and rate is not None else 'Auto')
+            mode.setCurrentIndex(0 if automatic else 1)
+            mode.blockSignals(False)
+            widget.setEnabled(not automatic)
+            widget.setVisible(not automatic)
             widget.setProperty('coverageBand', band)
+            mode.setProperty('coverageBand', band)
+            mode.setStyleSheet('')
             if band == 'unknown':
                 widget.setStyleSheet('')
                 widget.setToolTip('Add spending to calculate automatic coverage, or enter your current coverage rate.')
             else:
-                background, foreground, border = colors[band]
+                background, foreground, border = [theme_color(c) for c in colors[band]]
                 widget.setStyleSheet(f'QDoubleSpinBox {{ background: {background}; color: {foreground}; border-color: {border}; }} QLineEdit {{ background: transparent; color: {foreground}; border: none; }}')
-                widget.setToolTip(f'{"Automatic effective" if automatic else "Manual"} coverage: {rate:.2f}%. Red: 1% or below; yellow: above 1% and below 3%; green: 3% or above.')
+                if automatic:
+                    mode.setStyleSheet(f'QComboBox {{ background: {background}; color: {foreground}; border-color: {border}; }}')
+                widget.setToolTip(f'{"Automatic effective" if automatic else "Manual"} coverage: {rate:.2f}%. Your target is {self.target.value():g}%. Green meets the target; amber is below it; red means no rewards.')
+            mode.setToolTip(widget.toolTip())
 
     def schedule_update(self, *args):
         if hasattr(self, "timer"):
@@ -897,7 +1140,7 @@ class MainWindow(QMainWindow):
                     font.setPixelSize(17)
                     font.setWeight(QFont.Weight.DemiBold)
                     item.setFont(font)
-                    item.setForeground(QColor('#236347' if (match['ongoing'] if col == 2 else match['first_year']) > 0 else '#52665a'))
+                    item.setForeground(QColor(theme_color('#236347' if (match['ongoing'] if col == 2 else match['first_year']) > 0 else '#52665a')))
                 self.recommendations.setItem(row, col, item)
             self.recommendations.setRowHeight(row, 104)
         self.recommendations.blockSignals(False)
@@ -910,13 +1153,15 @@ class MainWindow(QMainWindow):
             effective = reward / (spend * 12) * 100 if spend else 0
             state = 'No spend' if not spend else 'Covered' if effective >= self.target.value() else 'Gap'
             gaps += state == 'Gap'
-            values = [label(cat), money(spend), f'{effective:.2f}%' if spend else '—', state]
+            providers = baseline.category_cards.get(cat, [])
+            provider_names = ' / '.join('Manual estimate' if i == 'manual' else self.by_id[i]['name'] for i in providers)
+            values = [label(cat), money(spend), f'{effective:.2f}%' if spend else '—', state, provider_names or 'Add a card or spending']
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 providers = baseline.category_cards.get(cat, [])
                 item.setToolTip(' / '.join('Manual coverage' if i == 'manual' else self.by_id[i]['name'] for i in providers))
                 if col == 3:
-                    item.setForeground(QColor('#805014' if state == 'Gap' else '#236347' if state == 'Covered' else '#52665a'))
+                    item.setForeground(QColor(theme_color('#805014' if state == 'Gap' else '#236347' if state == 'Covered' else '#52665a')))
                 self.coverage.setItem(row, col, item)
             self.coverage.setRowHeight(row, 62)
         self.gaps_metric.value.setText(str(gaps))
@@ -942,11 +1187,16 @@ class MainWindow(QMainWindow):
             top = [label(cat).split(' (')[0].lower() for cat, gain in gains if gain > .01][:2]
             self.hero_reason.setText('Adds value in ' + ' and '.join(top) + '.' if top else 'Compare its benefits and offer against your wallet.')
         self.notes.setText('Values show additional rewards after the new card’s annual fee.' + (f' {len(warnings)} wallet assumptions need review in Card settings.' if warnings else '') if monthly else 'Start with your wallet or spending. You can change either at any time.')
+        self.review_assumptions.setText(f'Review card assumptions ({len(warnings)})…' if warnings else 'Review card assumptions…')
+        self.matches_stale.setVisible(bool(self.profile.get('spending_stale')))
+        self.open_match.setEnabled(self.recommendations.currentRow() >= 0)
         if self.current_card and self.current_card['id'] in self.by_id:
             self.show_card(self.by_id[self.current_card['id']], reveal=False)
         elif self.current_card:
             self.current_card = None
             self.details_dialog.close()
+        if self.active_page == 'overview':
+            self.overview_page.reload()
 
     def choose_discovery_group(self, group):
         self.discovery_group = group
@@ -989,6 +1239,61 @@ class MainWindow(QMainWindow):
         caption = 'Search results' if query else group_title
         self.explore_count.setText(f'{caption} · {len(self.explored)} cards')
         self.search_empty.setVisible(browsing and not self.explored)
+        self.open_catalog.setVisible(browsing)
+        self.open_catalog.setEnabled(self.catalog_table.currentRow() >= 0)
+
+    def show_assumptions(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Review reward assumptions')
+        dialog.resize(620, 480)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(text('Check each card’s selections and point values before relying on a match.', 'muted', True))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        rows = QVBoxLayout(content)
+        ids = list(self.profile['wallet'])
+        index = self.recommendations.currentRow()
+        if self.matches:
+            ids.append(self.matches[index if 0 <= index < len(self.matches) else 0]['card']['id'])
+        for ident in dict.fromkeys(ids):
+            card = self.by_id.get(ident)
+            if not card:
+                continue
+            _, issues = rules_for(card, self.profile)
+            rows.addWidget(text(card['name'], 'sectionTitle'))
+            rows.addWidget(text(f'Point / mile value: {point_value(card, self.profile):g}¢. ' + (' '.join(issues) if issues else 'No unresolved category settings.'), 'muted', True))
+            button = QPushButton('Edit settings · ' + card['name'])
+            button.clicked.connect(lambda checked=False, c=card: self.edit_settings_for(c))
+            rows.addWidget(button)
+        rows.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def edit_settings_for(self, card):
+        dialog = CardSettings(card, self.profile, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.profile.setdefault('card_point_values', {})[card['id']] = dialog.value.value()
+            self.profile.setdefault('card_settings', {})[card['id']] = dialog.settings()
+            self.recalculate()
+
+    def show_match_calculation(self):
+        if not self.matches:
+            QMessageBox.information(self, 'Your card estimates', 'Add your wallet and monthly spending to compare additional rewards after the new card’s annual fee.')
+            return
+        index = self.recommendations.currentRow()
+        match = self.matches[index if 0 <= index < len(self.matches) else 0]
+        card = match['card']
+        fee = card['annualFee']['amount']
+        first_fee = 0 if card['annualFee'].get('waivedFirstYear') else fee
+        QMessageBox.information(self, card['name'] + ' · estimate',
+            f"Additional annual rewards: {money(match['gain'])}\nAnnual fee: {money(fee)}\nOngoing value: {money(match['ongoing'])}\n\n"
+            f"Year one: {money(match['gain'])} rewards − {money(first_fee)} fee + {money(match['bonus'])} counted bonus = {money(match['first_year'])}\n\n"
+            f"Point / mile value: {point_value(card, self.profile):g}¢. Assumes steady spending. Credits, interest, taxes and approval odds are excluded.\n" + '\n'.join(match['warnings']))
 
     def select_recommendation(self):
         row = self.recommendations.currentRow()
@@ -1109,7 +1414,7 @@ class MainWindow(QMainWindow):
         for name, content in [('Overview', overview), ('Offers', offers_html), ('Benefits', benefits_html), ('Sources', sources)]:
             browser = self.detail_browsers[name]
             position = browser.verticalScrollBar().value()
-            browser.setHtml(''.join(content))
+            browser.setHtml(themed(''.join(content)))
             if not new_card:
                 browser.verticalScrollBar().setValue(position)
         if new_card:
@@ -1230,10 +1535,13 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
+        if not getattr(self, 'restoring', False):
+            self.stocks_page.shutdown()
         self.artwork.close()
         self.timer.stop()
         self.details_dialog.close()
-        self.save_profile()
+        if not getattr(self, 'restoring', False):
+            self.save_profile()
         if self.worker and self.worker.isRunning():
             self.closing = True
             self.worker.requestInterruption()
@@ -1245,7 +1553,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Card Compass")
+    app.setApplicationName("Finance Compass")
     app.setOrganizationName("CardCompass")
     app.setStyle("Fusion")
     app.setPalette(light_palette())
@@ -1258,6 +1566,9 @@ def main():
     window = MainWindow(Path(temporary.name) if temporary else None, auto_refresh=not smoke)
     window.show()
     if smoke:
+        if window.active_page != 'overview':
+            raise RuntimeError("Finance overview unavailable")
+        window.navigate('explore')
         if window.active_page != 'explore' or window.dashboard_scroll.isHidden() or not window.catalog_table.isHidden():
             raise RuntimeError("Packaged discovery dashboard unavailable")
         window.category_tiles['cashback'].click()
@@ -1320,7 +1631,7 @@ def main():
         if window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) != 'groceries' or window.coverage_widgets['groceries'].property('coverageBand') != 'low':
             raise RuntimeError('Packaged spending sort or coverage colors failed')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
-        print('Dashboard smoke test: category tiles open active cards; dashboard is the startup page', flush=True)
+        print('Dashboard smoke test: finance overview opens first; category tiles open active cards', flush=True)
         print('Artwork smoke test: cached card image decoded for native display', flush=True)
         print('Offer smoke test: Venture miles, stays credit, and limited-time label displayed', flush=True)
         print('Statement smoke test: PDF parsed, merchant remembered, duplicate skipped', flush=True)

@@ -4,14 +4,16 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 import hashlib
+import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QDate
-from PySide6.QtWidgets import (QWidget, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QPushButton, QCheckBox, QLineEdit, QScrollArea, QFileDialog, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QDialogButtonBox)
 
 from .engine import DEFAULT_CATEGORIES, canonical, label
+from .ui import FitDialog as QDialog
 from .ledger import Ledger
 from .statements import extract_pdf_text, parse_statement_text
 from .csv_statements import read_csv_text, csv_table, suggested_columns, parse_csv_text, FIELDS
@@ -43,6 +45,8 @@ def category_picker(categories, value=None, placeholder=True):
 def grid(headers):
     widget = QTableWidget(0, len(headers))
     widget.setHorizontalHeaderLabels(headers)
+    widget.horizontalHeader().setTextElideMode(Qt.TextElideMode.ElideRight)
+    for column, title in enumerate(headers):widget.horizontalHeaderItem(column).setToolTip(title)
     widget.verticalHeader().hide()
     widget.verticalHeader().setDefaultSectionSize(58)
     widget.setShowGrid(False)
@@ -91,18 +95,33 @@ class CsvMappingDialog(QDialog):
             self.convention.addItem(title, key)
         form.addRow('Amount convention', self.convention)
         self.columns = {}
+        self.required_form = form
+        self.optional_box = QWidget()
+        optional_form = QFormLayout(self.optional_box)
+        self.optional_toggle = QCheckBox('Show optional columns and account details')
+        form.addRow(self.optional_toggle)
+        self.optional_toggle.toggled.connect(self.optional_box.setVisible)
         for field in FIELDS:
             combo = ScrollSafeComboBox()
             combo.addItem('Not supplied', None)
             for column in columns:
                 combo.addItem(column, column)
             combo.setCurrentIndex(max(0, combo.findData(guesses[field])))
-            form.addRow(field.replace('_', ' ').title(), combo)
+            label = field.replace('_', ' ').title()
+            (form if field in ('date', 'description', 'amount', 'debit', 'credit') else optional_form).addRow(label + (' (required)' if field in ('date', 'description') else ''), combo)
             self.columns[field] = combo
         self.ending = QLineEdit()
         self.ending.setMaxLength(5)
         self.ending.setPlaceholderText('Optional: last 4–5 digits, if no account column')
-        form.addRow('Account ending', self.ending)
+        optional_form.addRow('Account ending', self.ending)
+        form.addRow(self.optional_box)
+        self.optional_box.hide()
+        self.interpretation = text('Choose how amounts are signed to preview purchases and refunds.', 'muted', True)
+        form.addRow(self.interpretation)
+        self.csv_text = value
+        self.convention.currentIndexChanged.connect(self.update_example)
+        for combo in self.columns.values():
+            combo.currentIndexChanged.connect(self.update_example)
         layout.addWidget(scroll, 1)
         preview = grid(columns)
         preview.setMaximumHeight(170)
@@ -117,6 +136,23 @@ class CsvMappingDialog(QDialog):
         buttons.accepted.connect(self.validate)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.update_example()
+
+    def update_example(self, *_):
+        convention = self.convention.currentData()
+        split = convention == 'debit_credit'
+        for field in ('amount', 'debit', 'credit'):
+            self.required_form.setRowVisible(self.columns[field], (field != 'amount') == split)
+            self.required_form.labelForField(self.columns[field]).setText(field.title() + ' (required)')
+        if not convention:
+            self.interpretation.setText('Choose the convention using a purchase you recognize.')
+            return
+        try:
+            statement = parse_csv_text(self.csv_text, **self.config())
+            examples = statement.transactions[:3]
+            self.interpretation.setText('How these rows will be read:\n' + '\n'.join(f'{row.description}: {row.kind.title()} · {amount(row.amount_cents)}' for row in examples))
+        except ValueError as exc:
+            self.interpretation.setText('Preview: ' + str(exc))
 
     def config(self):
         return {'mapping': {field: combo.currentData() for field, combo in self.columns.items()},
@@ -176,12 +212,17 @@ class ImportDialog(QDialog):
         self.warning = text('', 'muted', True)
         layout.addWidget(self.warning)
         self.tabs = QTabWidget()
-        self.merchants = grid(['MERCHANT NAME / LINK TO SAVED MERCHANT', 'COUNT', 'CATEGORY', 'REMEMBER FOR'])
-        for col, width in ((1, 70), (2, 230), (3, 165)):
+        self.merchants = grid(['MERCHANT / MATCH', 'COUNT', 'CATEGORY', 'REMEMBER FOR'])
+        self.merchants.horizontalHeaderItem(0).setToolTip('Merchant name / link to a saved merchant')
+        self.merchants.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Interactive)
+        self.merchants.setColumnWidth(0,350)
+        for col, width in ((1, 90), (2, 230), (3, 165)):
             self.merchants.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.merchants.setColumnWidth(col, width)
         self.tabs.addTab(self.merchants, 'New merchants')
         self.transactions = grid(['DESCRIPTION', 'DATE', 'AMOUNT', 'TYPE', 'IMPORT', 'CATEGORY', 'ONE-OFF'])
+        self.transactions.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Interactive)
+        self.transactions.setColumnWidth(0,240)
         for col, width in ((1, 110), (2, 105), (3, 90), (4, 145), (5, 230)):
             self.transactions.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.transactions.setColumnWidth(col, width)
@@ -466,12 +507,37 @@ class ImportsPage(QWidget):
         actions.addWidget(import_button)
         layout.addLayout(actions)
         layout.addWidget(text('CSV exports with mapped columns, or BOFA and Amex PDFs with selectable text. Choose new merchant categories once.', 'muted', True))
+        self.filter_bar = QWidget()
+        filters = QHBoxLayout(self.filter_bar)
+        filters.setContentsMargins(0, 0, 0, 0)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText('Search merchant or description')
+        self.search.setClearButtonEnabled(True)
+        self.period = ScrollSafeComboBox()
+        self.card_filter = ScrollSafeComboBox()
+        self.order = ScrollSafeComboBox()
+        self.order.addItems(['Newest first', 'Oldest first', 'Largest amount', 'Merchant A–Z'])
+        for control in (self.search, self.period, self.card_filter, self.order):
+            filters.addWidget(control, 1)
+        self.drill_filter = None
+        self.filter_hint = text('', 'muted', True)
+        clear = QPushButton('Clear filters')
+        clear.clicked.connect(self.clear_filters)
+        filters.addWidget(clear)
+        layout.addWidget(self.filter_bar)
+        layout.addWidget(self.filter_hint)
         self.tabs = QTabWidget()
         self.transactions = grid(['MERCHANT / DESCRIPTION', 'DATE', 'AMOUNT', 'CATEGORY', 'CARD', 'ONE-OFF'])
         self.transactions.itemDoubleClicked.connect(self.edit_transaction)
         self.transactions.itemChanged.connect(self.one_off_changed)
         self.transactions.horizontalHeaderItem(5).setToolTip('Exclude unusual purchases from imported monthly averages used for recommendations.')
-        self.transactions.setColumnWidth(5, 90)
+        self.transactions.horizontalHeader().setMinimumSectionSize(100)
+        self.transactions.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.transactions.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col, width in ((0, 240), (1, 110), (2, 110), (3, 210), (4, 210), (5, 100)):
+            self.transactions.setColumnWidth(col, width)
+        self.transactions.setColumnHidden(4, True)
+        self.transactions.setColumnHidden(5, True)
         self.tabs.addTab(self.transactions, 'Transactions')
         self.merchants = grid(['MERCHANT', 'DEFAULT CATEGORY', 'APPLIES TO'])
         self.merchants.itemDoubleClicked.connect(self.edit_rule)
@@ -482,11 +548,20 @@ class ImportsPage(QWidget):
         self.imports = grid(['IMPORTED FILE', 'CLOSING DATE', 'SAVED TRANSACTIONS'])
         self.tabs.addTab(self.imports, 'Imported files')
         layout.addWidget(self.tabs, 1)
+        self.extra_columns = QCheckBox('Show card and one-off columns')
+        self.extra_columns.toggled.connect(lambda checked: [self.transactions.setColumnHidden(col, not checked) for col in (4, 5)])
+        layout.addWidget(self.extra_columns)
+        self.stale_button = QPushButton('Statement history changed · Update recommendation inputs…')
+        self.stale_button.clicked.connect(self.apply_spending)
+        layout.addWidget(self.stale_button)
         footer = QHBoxLayout()
-        edit = QPushButton('Edit selected category')
+        edit = self.edit_button = QPushButton('Edit selected category')
         self.tabs.currentChanged.connect(lambda index: edit.setText('Remove selected import' if index == 3 else 'Change linked card' if index == 2 else 'Edit selected category'))
         edit.clicked.connect(self.edit_selected)
         footer.addWidget(edit)
+        self.details_button = QPushButton('View selected purchase')
+        self.details_button.clicked.connect(self.show_transaction)
+        footer.addWidget(self.details_button)
         footer.addStretch()
         apply = QPushButton('Use imported spending')
         apply.clicked.connect(self.apply_spending)
@@ -494,6 +569,13 @@ class ImportsPage(QWidget):
         layout.addLayout(footer)
         self.status = text('', 'muted', True)
         layout.addWidget(self.status)
+        self.search.textChanged.connect(self.reload)
+        for control in (self.period, self.card_filter, self.order):
+            control.currentIndexChanged.connect(self.reload)
+        for table in (self.transactions, self.merchants, self.accounts, self.imports):
+            table.itemSelectionChanged.connect(self.update_actions)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tabs.currentChanged.connect(self.update_actions)
         self.reload()
 
     def categories(self):
@@ -502,12 +584,36 @@ class ImportsPage(QWidget):
         result -= {'choice_category', 'top_spend_category', 'second_highest_spend_category'}
         return result
 
-    def reload(self):
-        self.history = self.ledger.transactions()
+    def reload(self, *_):
+        all_rows = self.ledger.breakdown_rows()
+        for combo, options, title in (
+            (self.period, [(m, m) for m in sorted({r['date'][:7] for r in all_rows}, reverse=True)], 'All months'),
+            (self.card_filter, [(getattr(self.owner, 'by_id', {}).get(c, {}).get('name', c), c) for c in sorted({r['card_id'] for r in all_rows})], 'All cards'),
+        ):
+            previous = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(title, None)
+            for label, key in options:
+                combo.addItem(label, key)
+            # Preserve a drill-through filter even if it has no matches after an edit.
+            if previous and combo.findData(previous) < 0:
+                combo.addItem(previous, previous)
+            combo.setCurrentIndex(max(0, combo.findData(previous)))
+            combo.blockSignals(False)
+        query = self.search.text().strip().casefold()
+        self.history = [r for r in all_rows if (not query or query in (r['description'] + ' ' + r['merchant_name']).casefold())
+                        and (not self.period.currentData() or r['date'].startswith(self.period.currentData()))
+                        and (not self.card_filter.currentData() or r['card_id'] == self.card_filter.currentData())
+                        and (not self.drill_filter or self.matches_drill(r))]
+        order = self.order.currentIndex()
+        self.history.sort(key=(lambda r: r['date']) if order < 2 else (lambda r: abs(r['amount_cents'])) if order == 2 else (lambda r: r['merchant_name'].casefold()), reverse=order in (0, 2))
+        self.filter_hint.setText((self.drill_filter[2] + ' · ' if self.drill_filter else '') + f'{len(self.history)} of {len(all_rows)} transactions. Clear filters to see all history.')
         self.saved_rules = self.ledger.rules()
         self.saved_accounts = self.ledger.accounts()
         self.saved_imports = self.ledger.imports()
         self.transactions.blockSignals(True)
+        self.transactions.setCurrentCell(-1, -1)
         self.transactions.setRowCount(len(self.history))
         for index, row in enumerate(self.history):
             card = getattr(self.owner, 'by_id', {}).get(row['card_id'], {})
@@ -515,8 +621,11 @@ class ImportsPage(QWidget):
                       category_label(row['category']) + (' · override' if row['manual_override'] else '') if row['category'] else row['kind'].title() + ' · excluded',
                       card.get('name', row['card_id'])]
             for col, value in enumerate(values):
-                self.transactions.setItem(index, col, QTableWidgetItem(value))
-                self.transactions.item(index, col).setToolTip(row['filename'] + f" · page {row['page']} · {row['kind']}")
+                item=QTableWidgetItem(value)
+                if col==1:item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                elif col==2:item.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+                self.transactions.setItem(index, col, item)
+                self.transactions.item(index, col).setToolTip(row['description'] + '\n' + card.get('name', row['card_id']) + '\n' + row['filename'] + f" · page {row['page']} · {row['kind']}")
             one_off = QTableWidgetItem('')
             one_off.setData(Qt.ItemDataRole.UserRole, row['id'])
             one_off.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
@@ -534,7 +643,7 @@ class ImportsPage(QWidget):
             values = [rule['display_name'], category_label(rule['category']), 'All cards' if scope == 'global' else scope]
             for col, value in enumerate(values):
                 self.merchants.setItem(index, col, QTableWidgetItem(value))
-        self.summary.setText(f'{len(self.history)} transactions · {len(self.saved_rules)} remembered merchants')
+        self.summary.setText(f'{len(all_rows)} transactions · {len(self.saved_rules)} remembered merchants')
         self.imports.setRowCount(len(self.saved_imports))
         for index, imported in enumerate(self.saved_imports):
             for col, value in enumerate([imported['filename'], imported['closing_date'], str(imported['transaction_count'])]):
@@ -550,6 +659,81 @@ class ImportsPage(QWidget):
         breakdown = getattr(self.owner, 'breakdown_page', None)
         if breakdown:
             breakdown.reload()
+        self.update_stale()
+        self.update_actions()
+
+    def spending_signature(self):
+        spending, months = self.ledger.monthly_spending()
+        return hashlib.sha256(json.dumps([spending, months], sort_keys=True).encode()).hexdigest()
+
+    def update_stale(self):
+        stale = self.owner.profile.get('spending_source') == 'imports' and self.owner.profile.get('spending_signature') != self.spending_signature()
+        self.owner.profile['spending_stale'] = stale
+        self.stale_button.setVisible(stale)
+        if hasattr(self.owner, 'matches_stale'):
+            self.owner.matches_stale.setVisible(stale)
+        if hasattr(self.owner, 'timer'):
+            self.owner.save_profile()
+
+    def update_actions(self, *_):
+        if not hasattr(self, 'edit_button'):
+            return
+        index = self.tabs.currentIndex()
+        table = (self.transactions, self.merchants, self.accounts, self.imports)[index]
+        selected = table.currentRow() >= 0
+        self.edit_button.setEnabled(selected)
+        self.details_button.setEnabled(index == 0 and selected)
+        self.filter_bar.setVisible(index == 0)
+        self.filter_hint.setVisible(index == 0)
+        self.extra_columns.setVisible(index == 0)
+
+    def clear_filters(self):
+        self.drill_filter = None
+        self.search.clear()
+        self.period.setCurrentIndex(0)
+        self.card_filter.setCurrentIndex(0)
+        self.reload()
+
+    def matches_drill(self, row):
+        field, value, _ = self.drill_filter
+        return row['kind'] in ('purchase', 'refund') and ((row.get(field) or 'uncategorized') == value if field != 'date' else row['date'].startswith(value))
+
+    def show_group(self, grouping, key, label, month=None, card=None):
+        self.clear_filters()
+        self.drill_filter = ({'categories': 'category', 'merchants': 'merchant_group', 'cards': 'card_id', 'months': 'date'}[grouping], key, label)
+        if month:
+            self.period.setCurrentIndex(self.period.findData(month))
+        if card:
+            self.card_filter.setCurrentIndex(self.card_filter.findData(card))
+        self.tabs.setCurrentIndex(0)
+        self.reload()
+        self.owner.navigate('imports')
+
+    def show_transaction(self):
+        index = self.transactions.currentRow()
+        if not 0 <= index < len(self.history):
+            return
+        row = self.history[index]
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Purchase details')
+        dialog.resize(520, 360)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(text(row['description'], 'sectionTitle', True))
+        card = self.owner.by_id.get(row['card_id'], {}).get('name', row['card_id'])
+        layout.addWidget(text(f"{row['date']} · {amount(row['amount_cents'])} · {row['kind'].title()}\n{card}\n{category_label(row['category']) if row['category'] else 'Excluded from spending'}", 'muted', True))
+        one_off = QCheckBox('One-off purchase: exclude from recommendation averages')
+        one_off.setChecked(bool(row['one_off']))
+        one_off.setEnabled(row['kind'] in ('purchase', 'refund'))
+        layout.addWidget(one_off)
+        layout.addWidget(text('Still included in actual spending. Mark any matching refund separately.', 'muted', True))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if one_off.isEnabled():
+                self.ledger.set_one_off(row['id'], one_off.isChecked())
+            self.reload()
 
     def import_statement(self):
         cards = [card for card in self.owner.cards if card['id'] in self.owner.profile['wallet']]
@@ -673,7 +857,7 @@ class ImportsPage(QWidget):
 
     def apply_spending(self):
         spending, months = self.ledger.monthly_spending()
-        if not months:
+        if not months and not self.owner.profile.get('spending_stale'):
             self.status.setText('Import a statement first to calculate monthly spending.')
             return
         dialog = QDialog(self)
@@ -709,6 +893,9 @@ class ImportsPage(QWidget):
         finally:
             self.owner.applying_imported_spending = False
         self.owner.profile['spending_source'] = 'imports'
+        self.owner.profile['spending_signature'] = self.spending_signature()
+        self.owner.profile['spending_stale'] = False
         self.owner.recalculate()
+        self.update_stale()
         if navigate:
             self.owner.navigate('spending')

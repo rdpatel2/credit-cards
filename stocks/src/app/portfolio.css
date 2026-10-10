@@ -1,0 +1,243 @@
+.portfolio-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.widget-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+.widget-title-link:hover {
+  color: var(--green);
+}
+.trades-content .widget-toolbar,
+.trades-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.trades-content .table-scroll {
+  position: relative;
+}
+.trades-table td:first-child {
+  text-align: left;
+}
+.trades-pagination {
+  margin-top: 16px;
+  font-size: 11px;
+}
+.trade-side {
+  display: inline-block;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.trade-side-buy {
+  color: var(--green);
+  background: #88c7a515;
+}
+.trade-side-sell {
+  color: var(--amber);
+  background: #bca37315;
+}
+.watchlist-page-panel {
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+.watchlist-name-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.watchlist-name-form label {
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+}
+.watchlist-name-form input {
+  width: 280px;
+  max-width: 100%;
+}
+.watchlist-intro {
+  margin: 20px 0;
+  line-height: 1.6;
+}
+.watchlist-editor-content .widget-toolbar {
+  flex-wrap: wrap;
+}
+.watchlist-editor-content select {
+  max-width: 100%;
+}
+.watchlist-editor-content .add-symbol {
+  margin-bottom: 20px;
+}
+.watchlist-editor-content .table-scroll {
+  position: relative;
+}
+.watchlist-content .add-symbol input {
+  min-width: 0;
+}
+.watchlist-editor-content .watch-table td,
+.watchlist-editor-content .watch-table th,
+.watchlist-editor-content .add-symbol input,
+.watchlist-editor-content .add-symbol button {
+  font-size: 12px;
+}
+.watchlist-editor-content .row-remove {
+  opacity: 1;
+  width: 32px;
+  height: 32px;
+}
+.watchlist-cost-editor {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.watchlist-cost-editor > p {
+  line-height: 1.6;
+  margin: 14px 0;
+}
+.portfolio-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.portfolio-summary span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.portfolio-summary strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.portfolio-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.portfolio-fields label {
+  min-width: 0;
+}
+.portfolio-fields input,
+.portfolio-fields select {
+  width: 100%;
+}
+.portfolio-actions {
+  display: flex;
+  gap: 12px;
+}
+.ledger-table {
+  max-height: 300px;
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.ledger-table caption {
+  text-align: left;
+  padding: 12px;
+  color: var(--muted);
+}
+.tax-settings,
+.sale-scenario {
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+.tax-settings summary,
+.sale-result summary,
+.analyst-content summary {
+  cursor: pointer;
+}
+.sale-scenario h3 {
+  margin-bottom: 8px;
+}
+.sale-scenario p,
+.tax-settings p {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.tax-result {
+  background: var(--panel);
+}
+.modal:has(.sale-scenario) .modal-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.portfolio-sources {
+  font-size: 12px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.portfolio-sources a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.analyst-content {
+  padding: 14px;
+}
+.consensus-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 18px 0;
+}
+.consensus-heading strong {
+  font-size: 26px;
+}
+.consensus-heading span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.consensus-bars {
+  display: grid;
+  gap: 10px;
+}
+.consensus-bars > div {
+  display: grid;
+  grid-template-columns: 90px minmax(20px, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.consensus-bars meter {
+  width: 100%;
+  height: 14px;
+  accent-color: var(--green);
+}
+.analyst-content .widget-toolbar {
+  flex-wrap: wrap;
+}
+.analyst-content select {
+  max-width: 100%;
+}
+.analyst-content .widget-footnote {
+  padding: 10px 0;
+  line-height: 1.5;
+}
+@media (max-width: 540px) {
+  .watchlist-page-panel {
+    padding: 16px;
+  }
+  .portfolio-fields {
+    grid-template-columns: 1fr;
+  }
+  .portfolio-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .portfolio-summary strong {
+    font-size: 17px;
+  }
+}

@@ -53,6 +53,8 @@ def test_search_details_and_remove(window):
     window.search.setText("freedom unlimited")
     assert window.catalog_table.rowCount() == 1
     window.catalog_table.selectRow(0)
+    assert not window.details_dialog.isVisible()
+    window.open_catalog.click()
     assert window.current_card["id"] == "chase-freedom-unlimited"
     assert "Published signup offers" in window.offer_details.toPlainText()
     assert "Offers reviewed by source" in window.offer_details.toPlainText()
@@ -87,7 +89,8 @@ def test_offer_additional_perks_are_visible(window):
 
 def test_dashboard_is_startup_page_and_tiles_open_active_cards(window):
     from card_compass.discovery import card_groups
-    assert window.active_page == 'explore'
+    assert window.active_page == 'overview'
+    window.navigate('explore')
     assert not window.dashboard_scroll.isHidden()
     assert window.catalog_table.isHidden()
     assert window.catalog_table.rowCount() == 0
@@ -170,7 +173,6 @@ def test_monthly_spend_header_sorts_numerically_and_preserves_editors(window, ap
     header = window.spending.horizontalHeader()
     from PySide6.QtCore import QPoint
     position = QPoint(header.sectionViewportPosition(1) + 30, header.height() // 2)
-    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=position)
     ordered = [window.spending.cellWidget(row, 1).value() for row in range(window.spending.rowCount())]
     assert ordered == sorted(ordered, reverse=True)
     assert window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) == 'groceries'
@@ -180,7 +182,8 @@ def test_monthly_spend_header_sorts_numerically_and_preserves_editors(window, ap
     for row in range(window.spending.rowCount()):
         category = window.spending.item(row, 0).data(Qt.ItemDataRole.UserRole)
         assert window.spending.cellWidget(row, 1) is window.spend_widgets[category]
-        assert window.spending.cellWidget(row, 2) is window.coverage_widgets[category]
+        assert window.spending.cellWidget(row, 2).isAncestorOf(window.coverage_widgets[category])
+        assert window.spending.cellWidget(row, 2).isAncestorOf(window.coverage_modes[category])
     QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=position)
     ordered = [window.spending.cellWidget(row, 1).value() for row in range(window.spending.rowCount())]
     assert ordered == sorted(ordered)
@@ -189,7 +192,7 @@ def test_monthly_spend_header_sorts_numerically_and_preserves_editors(window, ap
 
 
 def test_spending_coverage_colors_match_boundaries_and_auto_rates(window):
-    for value, band in [(0, 'low'), (1, 'low'), (1.01, 'medium'), (2.99, 'medium'), (3, 'high'), (5, 'high')]:
+    for value, band in [(0, 'low'), (1, 'medium'), (1.99, 'medium'), (2, 'high'), (3, 'high'), (5, 'high')]:
         window.coverage_widgets['dining'].setValue(value)
         window.recalculate()
         assert window.coverage_widgets['dining'].property('coverageBand') == band
@@ -255,6 +258,7 @@ def test_successful_background_refresh_reloads_cards_and_keeps_profile(window, a
 
 def test_sidebar_navigation_and_spending_updates(window, app):
     window.show()
+    window.navigate('explore')
     assert not window.setup.isHidden()
     assert window.hero.isHidden()
     assert window.recommendations.isHidden()
@@ -278,6 +282,8 @@ def test_closed_details_stay_closed_and_reopen_from_keyboard(window, app):
     window.navigate('explore')
     window.search.setText('freedom unlimited')
     window.catalog_table.selectRow(0)
+    assert not window.details_dialog.isVisible()
+    window.open_catalog.click()
     assert window.details_dialog.isVisible()
     window.detail_tabs.setCurrentIndex(1)
     window.details_dialog.close()

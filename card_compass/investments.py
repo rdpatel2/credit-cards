@@ -163,6 +163,22 @@ def initial_workspace():
                 watchlists=[dict(id='core', name='Core watchlist', symbols=['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN'])])
 
 
+def include_purchased_symbols(state, tickers=None, watchlist_id=None):
+    """Track purchased tickers without duplicating them across watchlists."""
+    purchased=tickers if tickers is not None else [s for s,rows in state['trades'].items() if any(row['side']=='buy' for row in rows)]
+    watched={s for listing in state['watchlists'] for s in listing['symbols']}
+    preferred=next((w for w in state['watchlists'] if w['id']==watchlist_id),state['watchlists'][0])
+    for ticker in purchased:
+        ticker=symbol(ticker)
+        if ticker in watched:continue
+        target=preferred if len(preferred['symbols'])<30 else next((w for w in state['watchlists'] if len(w['symbols'])<30),None)
+        if target is None:
+            if len(state['watchlists'])>=20:raise ValueError('Your watchlists are full. Free a ticker slot to track this purchase.')
+            target=dict(id=uuid.uuid4().hex,name='Purchased investments',symbols=[])
+            state['watchlists'].append(target)
+        target['symbols'].append(ticker);watched.add(ticker)
+
+
 def validate_workspace(raw):
     """Accept Folio v1 exports without dropping their layouts or unknown settings."""
     try:
@@ -220,6 +236,7 @@ def validate_workspace(raw):
             if len(trades)>5000:
                 raise ValueError('Too many trades.')
             position(trades)
+        include_purchased_symbols(value)
         for key, note in value['notes'].items():
             if not isinstance(key, str) or not isinstance(note,str) or len(note)>20000:
                 raise ValueError('Invalid research notes.')
@@ -250,7 +267,7 @@ class InvestmentStore:
         self.state = candidate
         self.error = ''
 
-    def trade(self, ticker, row, delete=False):
+    def trade(self, ticker, row, delete=False, watchlist_id=None):
         ticker = symbol(ticker)
         state = deepcopy(self.state)
         trades = state['trades'].setdefault(ticker, [])
@@ -262,6 +279,7 @@ class InvestmentStore:
             trades.append(row)
         else:
             trades[index] = row
+        if not delete and row['side']=='buy':include_purchased_symbols(state,[ticker],watchlist_id)
         self.save(state)
 
     def portfolio(self):

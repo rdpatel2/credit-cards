@@ -48,6 +48,24 @@ def add_statement(window):
     return ledger
 
 
+def test_spending_defaults_to_numeric_descending_and_header_can_reverse(window):
+    window.spend_widgets['dining'].setValue(20)
+    window.spend_widgets['groceries'].setValue(1000)
+    window.spend_widgets['gas_stations'].setValue(200)
+    window.recalculate()
+    table=window.spending
+    values=[table.item(row,1).data(Qt.ItemDataRole.DisplayRole) for row in range(table.rowCount())]
+    assert window.spending_sort_order==Qt.SortOrder.DescendingOrder
+    assert values==sorted(values,reverse=True)
+    assert table.horizontalHeader().sortIndicatorOrder()==Qt.SortOrder.DescendingOrder
+    for row in range(table.rowCount()):
+        category=table.item(row,0).data(Qt.ItemDataRole.UserRole)
+        assert table.cellWidget(row,1) is window.spend_widgets[category]
+    window.sort_spending(1)
+    values=[table.item(row,1).data(Qt.ItemDataRole.DisplayRole) for row in range(table.rowCount())]
+    assert values==sorted(values) and window.spending_sort_order==Qt.SortOrder.AscendingOrder
+
+
 def test_first_plan_income_edit_and_shared_month(window):
     page = window.overview_page
     page.month.setDate(QDate(2026, 10, 1))

@@ -21,18 +21,18 @@ jobs:
       - run: python -m pytest -q
         env:
           QT_QPA_PLATFORM: offscreen
-      - run: python -m PyInstaller --noconfirm --windowed --onedir --name CardCompass --collect-data card_compass run_app.py
+      - run: python -m PyInstaller --noconfirm FinanceCompass.spec
       - name: Smoke test packaged app
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            dist/CardCompass/CardCompass.exe --smoke-test
+            dist/FinanceCompass/FinanceCompass.exe --smoke-test
           else
-            dist/CardCompass/CardCompass --smoke-test
+            dist/FinanceCompass/FinanceCompass --smoke-test
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: CardCompass-${{ matrix.os }}
-          path: dist/CardCompass*
+          name: FinanceCompass-${{ matrix.os }}
+          path: dist/FinanceCompass*
