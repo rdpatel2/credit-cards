@@ -15,3 +15,5 @@ Old drag/slot-swap/shared-row implementations will be deleted, rather than retai
 ## Verification
 
 Acceptance checks, migration coverage and phase commit details are recorded here as each phase completes.
+
+Phase 2 introduces the replaceable geometry engine, independent Qt scene panes, mouse/touch/pen handles, edit/view separation, placeholder/insertion previews, animated collision displacement, three resize handles, keyboard pickup/drop and native accessibility announcements. Engine and native canvas interaction tests pass (9 tests). The frame owns a fixed header and footer with a clipped body; pane positions no longer depend on Qt shared grid rows. Qt reference: [proxy widgets](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QGraphicsProxyWidget.html), [Graphics View](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QGraphicsView.html).
