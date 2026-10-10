@@ -1,4 +1,5 @@
 from datetime import date
+import math
 from PySide6.QtCore import Qt,QPointF
 from PySide6.QtGui import QPainter,QColor,QPen,QPainterPath
 from PySide6.QtWidgets import QWidget
@@ -8,12 +9,23 @@ from .widget_registry import money,numeric
 class PriceChart(QWidget):
     def __init__(self, points, currency='USD', parent=None):
         super().__init__(parent)
-        self.points=points
-        self.currency=currency
         self.setMinimumHeight(120)
         self.setAccessibleName('Historical closing prices')
-        if points:
-            self.setAccessibleDescription(f'{len(points)} points; first {money(points[0][1])}; last {money(points[-1][1])}; low {money(min(p[1] for p in points))}; high {money(max(p[1] for p in points))}')
+        self.set_data(points,currency)
+
+    def set_data(self,points,currency='USD'):
+        validated=[]
+        for when,value in points:
+            when,value=float(when),float(value)
+            if not math.isfinite(when) or not math.isfinite(value):raise ValueError('Invalid chart points. Refresh to reload this widget.')
+            date.fromtimestamp(when)
+            validated.append((when,value))
+        self.points,self.currency=validated,currency
+        if validated:
+            formatted=lambda value:money(value) if currency=='USD' else currency+' '+numeric(value)
+            self.setAccessibleDescription(f'{len(validated)} points; first {formatted(validated[0][1])}; last {formatted(validated[-1][1])}; low {formatted(min(p[1] for p in validated))}; high {formatted(max(p[1] for p in validated))}')
+        else:self.setAccessibleDescription('No historical prices loaded. Refresh to load data.')
+        self.update()
 
     def paintEvent(self,event):
         p=QPainter(self)

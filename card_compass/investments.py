@@ -147,7 +147,7 @@ def widget(kind, ident=None):
 def page(ident, name, kinds):
     from .dashboard.layout_engine import ENGINE, BREAKPOINTS
     widgets = [widget(kind) for kind in kinds]
-    layout = ENGINE.repair([dict(i=w['id'], x=(i % 2)*6, y=(i//2)*30, w=12 if w['type'] in ('positions', 'ledger', 'headlines') else 6, h=32) for i,w in enumerate(widgets)])
+    layout = ENGINE.repair([dict(i=w['id'], x=(i % 2)*6, y=(i//2)*30, w=12 if w['type'] in ('positions', 'ledger', 'headlines') else 6, h=32,minH=24 if w['type'] in ('positions','ledger','headlines') else 18) for i,w in enumerate(widgets)])
     return dict(id=ident, name=name, widgets=widgets, settings=dict(compact=True, density='comfortable', gap=12, reducedMotion=False),
                 layouts={key: ENGINE.derive(layout, key) for key in BREAKPOINTS})
 
@@ -188,11 +188,15 @@ def validate_workspace(raw):
             validate_profile(value['taxProfile'])
         if value.get('dataMode', 'auto') not in ('auto', 'demo'):
             raise ValueError('Invalid market data mode.')
-        for key in ('pages', 'watchlists'):
-            if not 1 <= len(value[key]) <= 20 or len({p['id'] for p in value[key]}) != len(value[key]):
-                raise ValueError('Each dashboard and watchlist needs a unique ID; limit 20.')
+        for key,limit in (('pages',24),('watchlists',20)):
+            if not 1 <= len(value[key]) <= limit or len({p['id'] for p in value[key]}) != len(value[key]):
+                raise ValueError(f'Each dashboard and watchlist needs a unique ID; limit {limit}.')
         if not any(p['id'] == 'home' for p in value['pages']):
             raise ValueError('The home dashboard is required.')
+        existing={p['id'] for p in value['pages']}
+        for ident,name,kinds in [('positions','Watchlists and positions',['positions']),('trade-history','Trade history',['ledger']),('market-news','Market news',['headlines','notes'])]:
+            if ident not in existing:value['pages'].append(page(ident,name,kinds))
+        if len(value['pages'])>24:raise ValueError('Limit: 20 custom dashboards and four primary pages.')
         watchlists = {w['id'] for w in value['watchlists']}
         for listing in value['watchlists']:
             if not isinstance(listing['symbols'], list) or not listing['name'].strip() or len(listing['symbols']) > 30:

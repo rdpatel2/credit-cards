@@ -41,6 +41,8 @@ def test_every_registered_widget_builds_without_overflow_and_has_refresh_states(
         ident=p.add_block(kind)
         QTest.qWait(5)
         frame=p.active_canvas().frames[ident]
+        import inspect
+        assert list(inspect.signature(REGISTRY.get(kind).Component).parameters)==['config','size','isEditing','onConfigChange']
         assert frame.component is not None, (kind,frame.footer.text())
         assert frame.body.geometry().bottom()<frame.footer.parentWidget().geometry().top()
         assert frame.footer.parentWidget().geometry().bottom()<frame.height()
@@ -55,4 +57,28 @@ def test_unknown_widget_placeholder_preserves_other_widgets(tmp_path):
     missing=state['pages'][0]['widgets'][0]['id']
     assert 'unavailable' in canvas.frames[missing].component.message_label.text()
     assert len(canvas.frames)==5
+    owner.close();owner.deleteLater();app.processEvents()
+
+
+def test_runtime_widget_failure_has_retry_without_rebuilding_neighbors(tmp_path):
+    app=QApplication.instance() or QApplication([])
+    owner=MainWindow(tmp_path,auto_refresh=False);owner.show();owner.navigate('stocks');p=owner.stocks_page
+    canvas=p.active_canvas();ident=p.current_page()['widgets'][0]['id'];frames=dict(canvas.frames);frame=frames[ident]
+    def crash():raise RuntimeError('Example data renderer failure')
+    frame.component.render=crash;frame.component.safe_render()
+    assert frame.component is None and 'error' in frame.footer_text
+    assert canvas.frames==frames and all(f.component for i,f in frames.items() if i!=ident)
+    p.widget_command(p.dashboard_page,ident,'refresh')
+    assert frame.component is not None and canvas.frames==frames
+    owner.close();owner.deleteLater();app.processEvents()
+
+
+def test_invalid_cached_chart_is_isolated_before_painting(tmp_path):
+    app=QApplication.instance() or QApplication([])
+    owner=MainWindow(tmp_path,auto_refresh=False);p=owner.stocks_page
+    ident=next(w['id'] for w in p.current_page()['widgets'] if w['type']=='chart')
+    p.data_layer.result('quote','AAPL|1mo',dict(price=100,currency='USD',points=[[1,float('nan')]]))
+    frame=p.active_canvas().frames[ident]
+    assert frame.component is None and 'error' in frame.footer_text
+    assert all(f.component for i,f in p.active_canvas().frames.items() if i!=ident)
     owner.close();owner.deleteLater();app.processEvents()

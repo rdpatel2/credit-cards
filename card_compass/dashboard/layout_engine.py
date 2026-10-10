@@ -150,9 +150,9 @@ class GridLayoutEngine:
 ENGINE = GridLayoutEngine()
 
 
-def dashboard_layout(dashboard, size):
+def dashboard_layout(dashboard, size, engine=ENGINE):
     layouts = dashboard.setdefault('layouts', {})
     if size not in layouts:
         source = next((layouts[key] for key in BREAKPOINTS if key in layouts), [])
-        layouts[size] = ENGINE.derive(source, size)
+        layouts[size] = engine.derive(source, size)
     return layouts[size]

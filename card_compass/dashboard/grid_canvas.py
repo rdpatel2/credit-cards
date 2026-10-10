@@ -1,9 +1,9 @@
 """Qt scene rendering: independent transformed panes, one page scroll owner."""
 from copy import deepcopy
 import os
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QTimer, QPropertyAnimation, QEasingCurve, QEvent
 from PySide6.QtGui import QColor, QPen, QPainter
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsLineItem, QApplication, QStyle
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsLineItem, QApplication, QStyle, QGraphicsDropShadowEffect, QWidget, QLabel, QVBoxLayout, QPushButton
 from .layout_engine import ENGINE, ROW_UNIT, breakpoint, dashboard_layout
 from .widget_frame import WidgetFrame
 
@@ -13,7 +13,10 @@ class GridCanvas(QGraphicsView):
     breakpointChanged = Signal(str)
     command = Signal(str, str)
     announced = Signal(str)
-    widgetDropped = Signal(str, str, int, int)
+    widgetDropped = Signal(str, str, int, int, object)
+    addRequested = Signal()
+    templateRequested = Signal()
+    historyRequested = Signal(str)
 
     def __init__(self, component_factory, parent=None, engine=ENGINE):
         super().__init__(parent)
@@ -37,6 +40,8 @@ class GridCanvas(QGraphicsView):
         self.gap = 12
         self.reduced_motion = False
         self.gallery_drop = None
+        self.gallery_pointer = None
+        self.pen_handle = None
         self.placeholder = QGraphicsRectItem()
         self.placeholder.setZValue(90)
         self.placeholder.setPen(QPen(QColor('#4a9eff'), 2, Qt.PenStyle.DashLine))
@@ -51,6 +56,11 @@ class GridCanvas(QGraphicsView):
         self.edge_scroll = QTimer(self)
         self.edge_scroll.setInterval(30)
         self.edge_scroll.timeout.connect(self.auto_scroll)
+        self.empty=QWidget(self.viewport());empty_layout=QVBoxLayout(self.empty)
+        message=QLabel('Build your dashboard\nAdd a widget or start with a ready-made layout.');message.setWordWrap(True);message.setAlignment(Qt.AlignmentFlag.AlignCenter);empty_layout.addWidget(message)
+        for label,signal in [('Add widget',self.addRequested),('Choose starter template',self.templateRequested)]:
+            button=QPushButton(label);button.setObjectName('rowAction');button.clicked.connect(lambda checked=False,s=signal:s.emit());empty_layout.addWidget(button)
+        self.empty.hide()
 
     @property
     def column_width(self):
@@ -69,9 +79,11 @@ class GridCanvas(QGraphicsView):
         self.gap = settings.get('gap', 12)
         self.reduced_motion = settings.get('reducedMotion', False) or bool(os.getenv('QT_REDUCED_MOTION')) or not self.style().styleHint(QStyle.StyleHint.SH_Widget_Animate)
         self.size_key = breakpoint(self.viewport().width())
-        layout = dashboard_layout(self.dashboard, self.size_key)
+        layout = dashboard_layout(self.dashboard, self.size_key, self.engine)
         self.current_layout = deepcopy(layout)
         blocks = {w['id']: w for w in dashboard['widgets']}
+        self.empty.setVisible(not blocks)
+        self.position_empty()
         for ident in list(self.items):
             if ident not in blocks or changed or self.frames[ident].block['type'] != blocks[ident]['type']:
                 proxy = self.items.pop(ident)
@@ -92,8 +104,9 @@ class GridCanvas(QGraphicsView):
             else:
                 frame = self.frames[ident]
                 if frame.block != block:
+                    config_changed=frame.block.get('config')!=block.get('config')
                     frame.block = deepcopy(block)
-                    if frame.component and hasattr(frame.component, 'set_config'):
+                    if config_changed and frame.component and hasattr(frame.component, 'set_config'):
                         frame.guarded(lambda f=frame, b=block: f.component.set_config(b.get('config', {})))
         self.apply_layout(layout)
         self.set_editing(self.editing)
@@ -143,7 +156,7 @@ class GridCanvas(QGraphicsView):
                 proxy.setPos(destination)
         if extent:
             bottom = max((self.rect_for(g).bottom() for g in layout), default=200)
-            self.setSceneRect(0, 0, self.viewport().width(), max(self.viewport().height(), bottom + 28))
+            self.setSceneRect(0, 0, max(1,self.viewport().width()-self.margin), max(self.viewport().height(), bottom + 28))
 
     def scene_point(self, global_point):
         return self.mapToScene(self.viewport().mapFromGlobal(global_point.toPoint()))
@@ -171,6 +184,9 @@ class GridCanvas(QGraphicsView):
         i = self.interaction
         proxy = self.items[i['ident']]
         proxy.setZValue(100)
+        shadow=QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(22);shadow.setOffset(0,7);shadow.setColor(QColor(0,0,0,100))
+        proxy.setGraphicsEffect(shadow)
         proxy.setScale(1.015 if i['kind'] == 'move' and not self.reduced_motion else 1)
         self.placeholder.show()
         self.frames[i['ident']].announce('Picked up ' + self.frames[i['ident']].block['title'])
@@ -207,6 +223,7 @@ class GridCanvas(QGraphicsView):
 
     def preview(self, geometry, point=None):
         i = self.interaction
+        if self.size_key=='xs':geometry.update(x=0,w=12)
         compact = self.dashboard.get('settings', {}).get('compact', True)
         self.indicator.hide()
         target = None
@@ -216,7 +233,7 @@ class GridCanvas(QGraphicsView):
             rect = self.rect_for(target)
             fraction_x = (point.x() - rect.left()) / rect.width()
             fraction_y = (point.y() - rect.top()) / rect.height()
-            if fraction_x < .22 or fraction_x > .78:
+            if self.size_key!='xs' and (fraction_x < .22 or fraction_x > .78):
                 side = 'left' if fraction_x < .22 else 'right'
                 layout = self.engine.split(i['original'], i['ident'], target['i'], side, compact)
                 x = rect.left() if side == 'left' else rect.right()
@@ -245,12 +262,18 @@ class GridCanvas(QGraphicsView):
         i = self.interaction
         if not i:
             return
+        if point is not None and not self.viewport().rect().contains(self.viewport().mapFromGlobal(point.toPoint())):
+            self.cancel()
+            return
         if point is not None and i['active'] and not i['keyboard']:
             self.pointer_move(point)
         active = i['active']
         layout = deepcopy(i['preview'])
         self.clear_interaction()
         self.apply_layout(layout if active else i['original'])
+        if i['keyboard']:
+            g=next(g for g in layout if g['i']==i['ident']);rect=self.rect_for(g)
+            self.ensureVisible(QRectF(rect.left(),rect.top(),rect.width(),40),8,8)
         if active and layout != i['original']:
             self.layoutChanged.emit(self.size_key, layout)
         self.frames[i['ident']].announce('Dropped ' + self.frames[i['ident']].block['title'])
@@ -266,16 +289,19 @@ class GridCanvas(QGraphicsView):
     def clear_interaction(self):
         i = self.interaction
         self.interaction = None
+        self.pen_handle = None
         self.edge_scroll.stop()
         self.placeholder.hide()
         self.indicator.hide()
         self.items[i['ident']].setScale(1)
         self.items[i['ident']].setZValue(0)
+        self.items[i['ident']].setGraphicsEffect(None)
         self.frames[i['ident']].header.pressed = False
         for handle in self.frames[i['ident']].handles.values():
             handle.pressed = False
 
     def key_move(self, ident, key, modifiers):
+        if self.history_key(key,modifiers):return
         if key == Qt.Key.Key_Escape:
             self.cancel()
             return
@@ -296,6 +322,23 @@ class GridCanvas(QGraphicsView):
                 g.update(x=g['x'] + dx, y=g['y'] + dy)
             self.preview(g)
             self.apply_layout(self.interaction['preview'], extent=False)
+            rect=self.rect_for(next(g for g in self.current_layout if g['i']==ident))
+            self.ensureVisible(QRectF(rect.left(),rect.top(),rect.width(),40),8,8)
+
+    def history_key(self,key,modifiers):
+        if modifiers & (Qt.KeyboardModifier.ControlModifier|Qt.KeyboardModifier.MetaModifier):
+            if key in (Qt.Key.Key_Z,Qt.Key.Key_Y):
+                self.historyRequested.emit('redo' if key==Qt.Key.Key_Y or modifiers & Qt.KeyboardModifier.ShiftModifier else 'undo')
+                return True
+        return False
+
+    def keyPressEvent(self,event):
+        from PySide6.QtWidgets import QTextEdit,QLineEdit
+        proxy=self.scene().focusItem()
+        focus=proxy.widget().focusWidget() if proxy and hasattr(proxy,'widget') and proxy.widget() else None
+        if (self.editing or not isinstance(focus,(QTextEdit,QLineEdit))) and self.history_key(event.key(),event.modifiers()):
+            event.accept();return
+        super().keyPressEvent(event)
 
     def auto_fit(self, ident):
         frame = self.frames[ident]
@@ -310,6 +353,12 @@ class GridCanvas(QGraphicsView):
     def auto_scroll(self):
         i = self.interaction
         if not i:
+            if self.gallery_drop and self.gallery_pointer is not None:
+                point=self.gallery_pointer
+                direction=-1 if point.y()<35 else 1 if point.y()>self.viewport().height()-35 else 0
+                if 0<=point.x()<=self.viewport().width() and direction:
+                    bar=self.verticalScrollBar();bar.setValue(bar.value()+15*direction)
+                    layout,hint,rect=self.gallery_preview(self.mapToScene(point));self.placeholder.setRect(rect)
             return
         point = self.viewport().mapFromGlobal(i['last'].toPoint())
         direction = -1 if point.y() < 35 else 1 if point.y() > self.viewport().height() - 35 else 0
@@ -320,6 +369,7 @@ class GridCanvas(QGraphicsView):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.position_empty()
         if not self.dashboard:
             return
         if self.interaction:
@@ -327,13 +377,39 @@ class GridCanvas(QGraphicsView):
         key = breakpoint(self.viewport().width())
         if key != self.size_key:
             self.size_key = key
-            self.current_layout = deepcopy(dashboard_layout(self.dashboard, key))
+            self.current_layout = deepcopy(dashboard_layout(self.dashboard, key, self.engine))
             self.breakpointChanged.emit(key)
         self.apply_layout(self.current_layout)
 
+    def position_empty(self):
+        if hasattr(self,'empty'):
+            width=min(360,max(180,self.viewport().width()-24))
+            self.empty.setGeometry(max(0,(self.viewport().width()-width)//2),20,width,min(200,max(120,self.viewport().height()-30)))
+
     def hideEvent(self,event):
         if self.interaction:self.cancel()
+        if self.gallery_drop:
+            self.gallery_drop=None;self.gallery_pointer=None;self.placeholder.hide();self.indicator.hide();self.edge_scroll.stop()
         super().hideEvent(event)
+
+    def viewportEvent(self,event):
+        # Qt proxies forward touch events, but QGraphicsView does not forward tablets.
+        if event.type() in (QEvent.Type.TabletPress,QEvent.Type.TabletMove,QEvent.Type.TabletRelease):
+            if event.type()==QEvent.Type.TabletPress and self.editing:
+                scene_point=self.mapToScene(event.position().toPoint())
+                for ident,proxy in self.items.items():
+                    frame=self.frames[ident];local=proxy.mapFromScene(scene_point).toPoint()
+                    if not frame.rect().contains(local):continue
+                    for handle in [*reversed(list(frame.handles.values())),frame.header]:
+                        if handle.enabled and handle.geometry().contains(local):
+                            if handle is frame.header and frame.menu_button.geometry().contains(local-handle.pos()):continue
+                            self.pen_handle=handle;break
+                    if self.pen_handle:break
+            if self.pen_handle:
+                self.pen_handle.tabletEvent(event)
+                if event.type()==QEvent.Type.TabletRelease:self.pen_handle=None
+                return True
+        return super().viewportEvent(event)
 
     def dragEnterEvent(self,event):
         from .gallery import WIDGET_MIME
@@ -341,29 +417,49 @@ class GridCanvas(QGraphicsView):
         kind=bytes(event.mimeData().data(WIDGET_MIME)).decode(errors='replace')
         if kind in REGISTRY.definitions and kind!='unknown':
             self.gallery_drop=kind
+            self.gallery_pointer=event.position().toPoint();self.edge_scroll.start()
             event.acceptProposedAction()
         else:event.ignore()
 
     def dragMoveEvent(self,event):
         if not self.gallery_drop:event.ignore();return
+        self.gallery_pointer=event.position().toPoint()
+        layout,hint,rect=self.gallery_preview(self.mapToScene(event.position().toPoint()))
+        self.placeholder.setRect(rect);self.placeholder.show()
+        event.acceptProposedAction()
+
+    def gallery_preview(self,point):
         from .widget_registry import REGISTRY
-        point=self.mapToScene(event.position().toPoint())
         definition=REGISTRY.get(self.gallery_drop)
         g=dict(i='__gallery__',x=round((point.x()-self.margin)/self.column_width),y=max(0,round((point.y()-self.margin)/ROW_UNIT)),
                w=12 if self.size_key=='xs' else definition.defaultSize[0],h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1])
-        layout=self.engine.move([*self.current_layout,g],g['i'],g,self.dashboard.get('settings',{}).get('compact',True))
-        self.placeholder.setRect(self.rect_for(next(g for g in layout if g['i']=='__gallery__')))
-        self.placeholder.show()
-        event.acceptProposedAction()
+        compact=self.dashboard.get('settings',{}).get('compact',True);hint=None
+        target=next((item for item in self.current_layout if self.rect_for(item).contains(point)),None)
+        self.indicator.hide()
+        if target:
+            rect=self.rect_for(target);fraction=(point.x()-rect.left())/rect.width()
+            if self.size_key!='xs' and (fraction<.22 or fraction>.78):
+                side='left' if fraction<.22 else 'right';hint=dict(target=target['i'],side=side)
+                layout=self.engine.split([*self.current_layout,g],g['i'],target['i'],side,compact)
+                x=rect.left() if side=='left' else rect.right();self.indicator.setLine(x,rect.top(),x,rect.bottom())
+            else:
+                after=point.y()>=rect.center().y();hint=dict(target=target['i'],after=after)
+                g.update(x=target['x'],w=target['w'],y=target['y']+target['h'] if after else target['y'])
+                layout=self.engine.move([*self.current_layout,g],g['i'],g,compact)
+                y=rect.bottom() if after else rect.top();self.indicator.setLine(rect.left(),y,rect.right(),y)
+            self.indicator.show()
+        else:layout=self.engine.move([*self.current_layout,g],g['i'],g,compact)
+        return layout,hint,self.rect_for(next(item for item in layout if item['i']==g['i']))
 
     def dragLeaveEvent(self,event):
-        self.gallery_drop=None;self.placeholder.hide();event.accept()
+        self.gallery_drop=None;self.gallery_pointer=None;self.edge_scroll.stop();self.placeholder.hide();self.indicator.hide();event.accept()
 
     def dropEvent(self,event):
         if not self.gallery_drop:event.ignore();return
         point=self.mapToScene(event.position().toPoint());kind=self.gallery_drop
-        self.gallery_drop=None;self.placeholder.hide()
-        self.widgetDropped.emit(kind,self.size_key,round((point.x()-self.margin)/self.column_width),max(0,round((point.y()-self.margin)/ROW_UNIT)))
+        layout,hint,rect=self.gallery_preview(point)
+        self.gallery_drop=None;self.gallery_pointer=None;self.edge_scroll.stop();self.placeholder.hide();self.indicator.hide()
+        self.widgetDropped.emit(kind,self.size_key,round((point.x()-self.margin)/self.column_width),max(0,round((point.y()-self.margin)/ROW_UNIT)),hint)
         event.acceptProposedAction()
 
     def drawBackground(self, painter, rect):

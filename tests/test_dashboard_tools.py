@@ -2,7 +2,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from copy import deepcopy
 import pytest
-from PySide6.QtCore import Qt, QPoint, QPointF, QMimeData
+from PySide6.QtCore import Qt, QPoint, QPointF, QMimeData, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -51,6 +51,19 @@ def test_native_gallery_drop_inserts_at_snapped_position(page):
     assert not canvas.placeholder.isVisible()
 
 
+def test_native_gallery_beside_drop_splits_and_is_undoable(page):
+    canvas=page.active_canvas();before=deepcopy(page.current_page());target=canvas.current_layout[0]
+    rect=canvas.rect_for(target);point=canvas.mapFromScene(QPointF(rect.left()+rect.width()*.9,rect.top()+70))
+    mime=QMimeData();mime.setData(WIDGET_MIME,b'notes')
+    QApplication.sendEvent(canvas.viewport(),QDragEnterEvent(point,Qt.DropAction.CopyAction,mime,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.NoModifier))
+    QApplication.sendEvent(canvas.viewport(),QDragMoveEvent(point,Qt.DropAction.CopyAction,mime,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.NoModifier))
+    assert canvas.indicator.isVisible()
+    QApplication.sendEvent(canvas.viewport(),QDropEvent(QPointF(point),Qt.DropAction.CopyAction,mime,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.NoModifier))
+    layout=canvas.current_layout;added=next(g for g in layout if g['i']==page.current_page()['widgets'][-1]['id']);neighbor=next(g for g in layout if g['i']==target['i'])
+    assert added['x']==neighbor['x']+neighbor['w'] and added['y']==neighbor['y']
+    page.layout_store.undo();assert page.current_page()==before
+
+
 def test_duplicate_remove_move_copy_dashboard_and_undo(page):
     before=deepcopy(page.store.state['pages'])
     block=page.current_page()['widgets'][0]
@@ -90,3 +103,33 @@ def test_template_import_settings_reset_are_undoable(page,name):
     ident=page.import_dashboard_data(dict(schemaVersion=2,dashboard=template))
     assert page.current_page()['id']==ident
     page.layout_store.undo();assert not any(d['id']==ident for d in page.store.state['pages'])
+
+
+def test_real_menu_clicks_never_drag_and_control_z_redoes_exactly(page,monkeypatch):
+    canvas=page.active_canvas();ident=page.current_page()['widgets'][0]['id'];frame=canvas.frames[ident]
+    before=deepcopy(page.current_page());configured=[]
+    monkeypatch.setattr(page,'configure_widget',lambda i,p:configured.append(i))
+    def choose():frame.menu.actions()[0].trigger();frame.menu.close()
+    QTimer.singleShot(0,choose)
+    QTest.mouseClick(frame.menu_button,Qt.MouseButton.LeftButton)
+    QTest.qWait(20)
+    assert configured==[ident] and canvas.interaction is None and page.current_page()==before
+    page.edit_layout.setChecked(True)
+    header=frame.header
+    QTest.keyClick(header,Qt.Key.Key_Space);QTest.keyClick(header,Qt.Key.Key_Right);QTest.keyClick(header,Qt.Key.Key_Return)
+    after=deepcopy(page.current_page());assert before!=after
+    QTest.keyClick(header,Qt.Key.Key_Z,Qt.KeyboardModifier.ControlModifier)
+    assert page.current_page()==before
+    QTest.keyClick(header,Qt.Key.Key_Z,Qt.KeyboardModifier.ControlModifier|Qt.KeyboardModifier.ShiftModifier)
+    assert page.current_page()==after
+
+
+def test_layout_commit_reuses_components_without_rendering_widget_data(page,monkeypatch):
+    canvas=page.active_canvas();calls=[]
+    for frame in canvas.frames.values():
+        component=frame.component;render=component.render
+        def counted(c=component,r=render):calls.append(c);r()
+        monkeypatch.setattr(component,'render',counted)
+    page.edit_layout.setChecked(True);header=next(iter(canvas.frames.values())).header
+    QTest.keyClick(header,Qt.Key.Key_Space);QTest.keyClick(header,Qt.Key.Key_Right);QTest.keyClick(header,Qt.Key.Key_Return)
+    assert page.layout_store.past and not calls

@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QDate, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
  QTabWidget, QDialog, QDialogButtonBox, QFormLayout, QDateEdit, QSpinBox, QFileDialog,
- QInputDialog, QMessageBox, QCheckBox, QLabel, QMenu)
+ QInputDialog, QMessageBox, QCheckBox, QLabel, QMenu, QFrame, QSizePolicy)
 from .catalog import write_json
 from .investments import WIDGETS, METRICS, RANGES, widget, page, symbol, position, simulate_sale, validate_workspace, VIEW_COLUMNS, validate_view_settings
 from .investment_tax import STATUSES, DEDUCTIONS, NC_DEDUCTIONS, FIELDS, estimate_tax
@@ -19,10 +19,21 @@ from .dashboard.grid_canvas import GridCanvas
 from .dashboard.layout_engine import ENGINE, dashboard_layout
 from .dashboard.layout_store import LayoutStore
 from .dashboard.data_layer import DataLayer
-from .dashboard.widget_registry import REGISTRY, ConfigPanel, money, numeric
+from .dashboard.widget_registry import REGISTRY, create_widget, money
 from .dashboard.gallery import WidgetGallery
 from .dashboard.tools import DashboardSettings, STARTERS, starter
 from .dashboard.schema import normalize_dashboard
+
+
+class StatusLabel(QLabel):
+    """Status changes cannot resize the canvas during a pointer gesture."""
+    def __init__(self,message):
+        super().__init__(message)
+        self.setObjectName('muted');self.setFixedHeight(32);self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        self.setToolTip(message)
+    def setText(self,message):
+        super().setText(message);self.setToolTip(message)
 
 
 class ViewSettingsDialog(QDialog):
@@ -124,9 +135,12 @@ class DashboardPanel(QWidget):
         layout=QVBoxLayout(self);layout.setContentsMargins(12,12,12,12)
         self.canvas=GridCanvas(lambda frame:owner.create_component(frame,self),self)
         self.canvas.layoutChanged.connect(lambda size,geometry:owner.layout_changed(self,size,geometry))
-        self.canvas.command.connect(lambda ident,command:owner.widget_command(self,ident,command))
+        self.canvas.command.connect(lambda ident,command:owner.try_widget_command(self,ident,command))
         self.canvas.announced.connect(owner.announce)
-        self.canvas.widgetDropped.connect(lambda kind,size,x,y:owner.add_block(kind,self,(size,x,y)))
+        self.canvas.widgetDropped.connect(lambda kind,size,x,y,hint:owner.try_add_block(kind,self,(size,x,y,hint)))
+        self.canvas.addRequested.connect(owner.add_widget)
+        self.canvas.templateRequested.connect(owner.apply_template)
+        self.canvas.historyRequested.connect(lambda action:owner.layout_store.undo() if action=='undo' else owner.layout_store.redo())
         layout.addWidget(self.canvas)
 
 
@@ -140,7 +154,7 @@ class ResearchPanel(DashboardPanel):
         self.customize.toggled.connect(owner.customize_stock)
         controls.addWidget(self.customize)
         for label,handler in [('Record trade',lambda:owner.record_trade(ticker)),('What if I sell?',lambda:owner.sale_scenario(ticker))]:
-            button=QPushButton(label);button.clicked.connect(handler);controls.addWidget(button)
+            button=QPushButton(label);button.setObjectName('rowAction');button.clicked.connect(handler);controls.addWidget(button)
         self.layout().insertLayout(0,controls)
         self.scope_label=text('','muted',True)
         self.layout().insertWidget(1,self.scope_label)
@@ -155,17 +169,16 @@ class StocksPage(QWidget):
         self.stock_view=False;self.news_view=False;self.research_tabs={};self.note_editors={}
         self.layout_store=LayoutStore(self.store,validate_workspace,self)
         self.data_layer=DataLayer(self.store,owner.directory,self.network_enabled,self)
+        self.data_layer.persist=self.layout_store.schedule_save;self.data_layer.flush_persist=self.layout_store.flush
+        self.layout_store.saveState.connect(self.data_layer.saved)
         self.cache=self.data_layer.cache;self.failures=self.data_layer.failures
-        existing={p['id'] for p in self.store.state['pages']}
-        for ident,name,kinds in [('positions','Watchlists and positions',['positions']),('trade-history','Trade history',['ledger']),('market-news','Market news',['headlines','notes'])]:
-            if ident not in existing:self.store.state['pages'].append(page(ident,name,kinds))
         self.store.state=validate_workspace(self.store.state)
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(8)
         toolbar=QHBoxLayout()
         self.ticker=QLineEdit();self.ticker.setPlaceholderText('Open a ticker · AAPL, MSFT');self.ticker.setMaximumWidth(250)
         self.ticker.returnPressed.connect(self.open_ticker);toolbar.addWidget(self.ticker,1)
-        open_button=QPushButton('Open');open_button.clicked.connect(self.open_ticker);toolbar.addWidget(open_button)
-        self.refresh_button=QPushButton('Refresh market data');self.refresh_button.clicked.connect(self.refresh_data);toolbar.addWidget(self.refresh_button)
+        open_button=QPushButton('Open');open_button.setObjectName('rowAction');open_button.clicked.connect(self.open_ticker);toolbar.addWidget(open_button)
+        self.refresh_button=QPushButton('Refresh market data');self.refresh_button.setObjectName('rowAction');self.refresh_button.clicked.connect(self.refresh_data);toolbar.addWidget(self.refresh_button)
         self.mode=ScrollSafeComboBox();self.mode.addItem('Public market data','auto');self.mode.addItem('Demo preview','demo')
         self.mode.setCurrentIndex(self.mode.findData(self.store.state.get('dataMode','auto')));self.mode.currentIndexChanged.connect(self.set_mode);toolbar.addWidget(self.mode)
         utilities=QPushButton('Tools');menu=QMenu(utilities)
@@ -173,28 +186,37 @@ class StocksPage(QWidget):
         utilities.setMenu(menu);toolbar.addWidget(utilities);layout.addLayout(toolbar)
         self.metrics=[Metric('Remaining cost basis','Across all saved positions'),Metric('Realized gain / loss','FIFO · recorded sales'),Metric('Market value','USD positions with usable live quotes')]
         self.summary_tiles=QWidget();row=QHBoxLayout(self.summary_tiles);row.setContentsMargins(0,0,0,0)
-        for metric in self.metrics:metric.set_compact();row.addWidget(metric,1)
+        self.summary_tiles.setFixedHeight(106)
+        for metric in self.metrics:
+            metric.set_compact();metric.setFixedHeight(106);metric.setMinimumWidth(0)
+            metric.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+            for label in (metric.caption,metric.value,metric.description):
+                label.setMinimumWidth(0);label.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
+            metric.description.setFixedHeight(36)
+            row.addWidget(metric,1)
         self.valuation_details=QPushButton('See unpriced positions');self.valuation_details.setObjectName('quiet');self.valuation_details.clicked.connect(self.show_unpriced);row.addWidget(self.valuation_details)
         layout.addWidget(self.summary_tiles)
-        self.status=text('Start with a watchlist or Record trade. Use Edit layout to arrange blocks.','muted',True);layout.addWidget(self.status)
+        self.status=StatusLabel('Start with a watchlist or Record trade. Use Edit layout to arrange blocks.')
+        self.status_row=QHBoxLayout();self.status_row.addWidget(self.status,1);layout.addLayout(self.status_row)
         controls=QHBoxLayout()
         self.dashboards=ScrollSafeComboBox();self.dashboards.setMinimumContentsLength(10);self.dashboards.setSizeAdjustPolicy(self.dashboards.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.dashboards.currentIndexChanged.connect(self.choose_dashboard);controls.addWidget(self.dashboards,1)
-        create=QPushButton('New dashboard');create.clicked.connect(self.new_dashboard);controls.addWidget(create)
-        self.dashboard_tools=QPushButton('Dashboard tools');self.tools_menu=QMenu(self.dashboard_tools)
+        create=QPushButton('New dashboard');create.setObjectName('rowAction');create.clicked.connect(self.new_dashboard);controls.addWidget(create)
+        self.dashboard_tools=QPushButton('Dashboard tools');self.dashboard_tools.setObjectName('rowAction');self.tools_menu=QMenu(self.dashboard_tools)
         for label,handler in [('Rename',self.rename_dashboard),('Duplicate dashboard',self.duplicate_dashboard),
             ('Move dashboard earlier',lambda:self.reorder_dashboard(-1)),('Move dashboard later',lambda:self.reorder_dashboard(1)),
             ('Dashboard settings…',self.dashboard_settings),('Reset layout',self.reset_layout),
             ('Export dashboard JSON…',self.export_dashboard),('Import dashboard JSON…',self.import_dashboard),
-            ('Save as template…',self.save_template),('Apply template…',self.apply_template),('Delete',self.delete_dashboard)]:self.tools_menu.addAction(label,handler)
+            ('Save as template…',self.save_template),('Apply template…',self.apply_template),('How to arrange widgets',self.layout_help),('Delete',self.delete_dashboard)]:self.tools_menu.addAction(label,handler)
         self.dashboard_tools.setMenu(self.tools_menu);controls.addWidget(self.dashboard_tools)
-        add=QPushButton('Add widget');add.clicked.connect(self.add_widget);controls.addWidget(add)
+        add=QPushButton('Add widget');add.setObjectName('rowAction');add.clicked.connect(self.add_widget);controls.addWidget(add)
         self.edit_layout=QCheckBox('Edit layout');self.edit_layout.toggled.connect(self.set_editing);controls.addWidget(self.edit_layout)
-        self.saved=QPushButton('Saved');self.saved.setObjectName('quiet');self.saved.clicked.connect(self.layout_store.flush);controls.addWidget(self.saved)
+        self.saved=QPushButton('Saved');self.saved.setObjectName('quiet');self.saved.setFixedWidth(116);self.saved.clicked.connect(self.layout_store.flush)
         layout.addLayout(controls)
         self.undo_button=QPushButton('Undo');self.undo_button.setObjectName('rowAction');self.undo_button.clicked.connect(self.layout_store.undo)
         self.redo_button=QPushButton('Redo');self.redo_button.setObjectName('rowAction');self.redo_button.clicked.connect(self.layout_store.redo)
-        history=QHBoxLayout();history.addWidget(self.undo_button);history.addWidget(self.redo_button);history.addStretch();layout.addLayout(history)
+        self.status_row.addWidget(self.undo_button);self.status_row.addWidget(self.redo_button)
+        self.status_row.addWidget(self.saved)
         self.tabs=QTabWidget();self.tabs.setTabsClosable(True);self.tabs.tabBar().setMovable(True);self.tabs.tabCloseRequested.connect(self.close_research_tab);layout.addWidget(self.tabs,1)
         for attr,ident,label in [('dashboard_page','home','Home dashboard'),('watchlist_page','positions','Watchlists and positions'),('history_page','trade-history','Trade history'),('news_page','market-news','Market news')]:
             panel=DashboardPanel(self,ident);setattr(self,attr,panel);self.tabs.addTab(panel,label)
@@ -205,15 +227,23 @@ class StocksPage(QWidget):
         for index in range(4):
             for side in (self.tabs.tabBar().ButtonPosition.LeftSide,self.tabs.tabBar().ButtonPosition.RightSide):self.tabs.tabBar().setTabButton(index,side,None)
         self.tabs.currentChanged.connect(self.tab_changed)
-        self.data_layer.actions=dict(open_symbol=self.open_symbol,open_url=lambda url:QDesktopServices.openUrl(QUrl(url)),record_trade=self.record_trade,add_symbol=self.add_symbol,sale_selected=self.sell_selected,edit_trade=self.edit_trade,delete_trade=self.delete_trade)
+        self.data_layer.actions=dict(open_symbol=self.open_symbol,open_url=lambda url:QDesktopServices.openUrl(QUrl(url)),record_trade=self.record_trade,add_symbol=self.add_symbol,sale_scenario=self.sale_scenario,edit_trade=self.edit_trade,delete_trade=self.delete_trade,remove_symbol=self.remove_symbol,new_watchlist=self.new_watchlist,rename_watchlist=self.rename_watchlist,delete_watchlist=self.delete_watchlist)
         self.data_layer.message.connect(self.status.setText)
-        self.data_layer.changed.connect(lambda key:self.render_metrics())
+        self.data_layer.changed.connect(lambda key:self.render_metrics() if key=='workspace' or key.startswith('quote:') and key.endswith('|1d') else None)
         self.layout_store.changed.connect(self.reload);self.layout_store.historyChanged.connect(self.update_history)
         self.layout_store.saveState.connect(self.saved.setText)
+        self.layout_store.saveState.connect(lambda value:self.saved.setToolTip(getattr(self.layout_store,'last_error','') if value.startswith('Failed') else 'Layout saved to your workspace on this device'))
+        redo=QShortcut(QKeySequence('Ctrl+Shift+Z'),self);redo.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);redo.activated.connect(self.layout_store.redo)
         for sequence,handler in [(QKeySequence.StandardKey.Undo,self.layout_store.undo),(QKeySequence.StandardKey.Redo,self.layout_store.redo)]:
             shortcut=QShortcut(QKeySequence(sequence),self);shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);shortcut.activated.connect(handler)
+        self.toast=QFrame(self);self.toast.setObjectName('surface');toast_layout=QHBoxLayout(self.toast)
+        toast_layout.addWidget(QLabel('Widget removed'))
+        toast_undo=QPushButton('Undo');toast_undo.setObjectName('rowAction');toast_layout.addWidget(toast_undo)
+        toast_undo.clicked.connect(lambda:(self.layout_store.undo(),self.toast.hide()))
+        self.toast.hide();self.toast_timer=QTimer(self);self.toast_timer.setSingleShot(True);self.toast_timer.setInterval(8000);self.toast_timer.timeout.connect(self.toast.hide)
         self.ensure_news_page()
         self.reload()
+        if self.store.error:self.status.setText(self.store.error)
 
     def panels(self):return [self.dashboard_page,self.watchlist_page,self.history_page,self.news_page,*self.research_tabs.values()]
     def dashboard_for(self,panel,state=None):
@@ -232,7 +262,7 @@ class StocksPage(QWidget):
                 block=next(w for w in self.dashboard_for(panel,state)['widgets'] if w['id']==frame.ident)
                 block['config'].update(values)
             self.layout_store.mutate('Configure '+frame.block['title'],edit)
-        component=definition.Component(definition,config,frame.body.size(),self.edit_layout.isChecked(),change,self.data_layer)
+        component=create_widget(definition,config,frame.body.size(),self.edit_layout.isChecked(),change,self.data_layer)
         component.footerChanged.connect(frame.set_footer);frame.set_footer(component.footer_text)
         component.crashed.connect(frame.show_error)
         frame.refresh_button.setVisible(bool(definition.dataRequirements(config,self.store.state)))
@@ -257,21 +287,36 @@ class StocksPage(QWidget):
     def reload(self):
         self.dashboards.blockSignals(True);self.dashboards.clear()
         for p in self.store.state['pages']:self.dashboards.addItem(p['name'],p['id'])
-        self.dashboards.setCurrentIndex(max(0,self.dashboards.findData(self.current_page()['id'])));self.dashboards.blockSignals(False)
+        for ticker in self.research_tabs:self.dashboards.addItem(ticker+' · Research','stock:'+ticker)
+        selected='stock:'+self.selected_symbol if self.stock_view else 'market-news' if self.news_view else self.current_page()['id']
+        self.dashboards.setCurrentIndex(max(0,self.dashboards.findData(selected)));self.dashboards.blockSignals(False)
         for panel in self.panels():self.render_panel(panel)
         for panel in (self.dashboard_page,self.watchlist_page,self.history_page,self.news_page):
             self.tabs.setTabText(self.tabs.indexOf(panel),self.dashboard_for(panel)['name'])
-        self.data_layer.notify_local();self.render_metrics();self.apply_view_settings();self.update_history()
+        domain={key:self.store.state.get(key) for key in ('trades','watchlists','notes','viewSettings','dataMode')}
+        if domain!=getattr(self,'_domain',None):
+            self._domain=domain;self.data_layer.notify_local();self.render_metrics()
+        self.apply_view_settings();self.update_history()
     def render_dashboard(self):self.render_panel(self.tabs.currentWidget())
     def layout_changed(self,panel,size,layout):
         self.layout_store.mutate('Arrange blocks',lambda state:self.dashboard_for(panel,state)['layouts'].__setitem__(size,deepcopy(layout)))
     def set_editing(self,editing):
         for panel in self.panels():panel.canvas.set_editing(editing)
         self.status.setText('Edit mode · drag headers, resize edges, or use Space + arrows. Escape cancels.' if editing else 'View mode · content is interactive. Edit layout to arrange blocks.')
+    def layout_help(self):
+        QMessageBox.information(self,'Arrange your dashboard',
+            '1. Turn on Edit layout. Drag any widget header to move it.\n'
+            '2. Drop near a widget’s left or right edge to create columns; drop above or below to insert. The blue preview shows the result.\n'
+            '3. Drag a right or bottom edge, or the corner, to resize. Double-click an edge to fit the content.\n'
+            '4. Use ⋯ to configure, duplicate, move to another dashboard, expand, lock or remove a widget.\n'
+            '5. Turn Edit layout off to use tables and notes. Changes save automatically; Undo and Redo recover previous layouts.\n\n'
+            'Keyboard: focus a header, Space to pick up, arrows to move, Shift + arrows to resize, Enter to drop, Escape to cancel.\n'
+            'Dashboard tools → Dashboard settings lets you turn off gap closing for free placement.')
     def announce(self,message):self.status.setText(message)
     def update_history(self):
         self.undo_button.setEnabled(bool(self.layout_store.past));self.redo_button.setEnabled(bool(self.layout_store.future))
-        self.undo_button.setText('Undo '+self.layout_store.past[-1][0] if self.layout_store.past else 'Undo')
+        self.undo_button.setToolTip('Undo '+self.layout_store.past[-1][0] if self.layout_store.past else 'Nothing to undo')
+        if hasattr(self,'toast') and (not self.layout_store.past or self.layout_store.past[-1][0]!='Remove widget'):self.toast.hide()
     def commit(self,state,render=True):
         try:self.layout_store.replace(state);self.layout_store.flush();return True
         except (ValueError,OSError) as exc:self.status.setText(str(exc));return False
@@ -301,9 +346,14 @@ class StocksPage(QWidget):
         elif command=='duplicate':self.duplicate_widget(ident,panel)
         elif command in ('move','copy'):self.move_widget_to(ident,panel,command=='copy')
         elif command=='expand':self.expand_widget(ident,panel)
+    def try_widget_command(self,panel,ident,command):
+        try:self.widget_command(panel,ident,command)
+        except (ValueError,OSError,StopIteration) as exc:self.status.setText(str(exc))
     def configure_widget(self,ident,panel=None):
         panel=panel or self.tabs.currentWidget();block=next(w for w in self.dashboard_for(panel)['widgets'] if w['id']==ident)
-        definition=REGISTRY.get(block['type']);dialog=definition.ConfigPanel(definition,block['config'],self.data_layer,self)
+        definition=REGISTRY.get(block['type'])
+        if definition.ConfigPanel is None:self.status.setText('This widget has no additional configuration. Use Rename title or Edit layout.');return
+        dialog=definition.ConfigPanel(definition,block['config'],self.data_layer,self)
         while dialog.exec()==QDialog.DialogCode.Accepted:
             try:
                 values=dialog.values()
@@ -320,7 +370,14 @@ class StocksPage(QWidget):
                 x,y=(placement[1],placement[2]) if placement and placement[0]==key else (0,0)
                 geometry=dict(i=block['id'],x=x,y=y,w=width,h=definition.defaultSize[1],minW=definition.minSize[0],minH=definition.minSize[1])
                 if placement and placement[0]==key:
-                    dashboard['layouts'][key]=ENGINE.move([*layout,geometry],block['id'],geometry,dashboard['settings']['compact'])
+                    hint=placement[3] if len(placement)>3 else None
+                    if hint and hint.get('side'):
+                        dashboard['layouts'][key]=ENGINE.split([*layout,geometry],block['id'],hint['target'],hint['side'],dashboard['settings']['compact'])
+                    else:
+                        if hint:
+                            target=next(g for g in layout if g['i']==hint['target'])
+                            geometry.update(x=target['x'],w=target['w'],y=target['y']+(target['h'] if hint['after'] else 0))
+                        dashboard['layouts'][key]=ENGINE.move([*layout,geometry],block['id'],geometry,dashboard['settings']['compact'])
                 else:
                     dashboard['layouts'][key]=ENGINE.insert(layout,ENGINE.first_free(layout,geometry),dashboard['settings']['compact'])
         self.layout_store.mutate('Add '+definition.title,add)
@@ -328,9 +385,12 @@ class StocksPage(QWidget):
     def add_widget(self):
         if not hasattr(self,'gallery'):
             self.gallery=WidgetGallery(self.data_layer,self)
-            self.gallery.selected.connect(self.add_block)
+            self.gallery.selected.connect(self.try_add_block)
             self.gallery.dragging.connect(lambda:self.edit_layout.setChecked(True))
         self.gallery.show();self.gallery.raise_();self.gallery.activateWindow()
+    def try_add_block(self,kind,panel=None,placement=None):
+        try:return self.add_block(kind,panel,placement)
+        except ValueError as exc:self.status.setText(str(exc))
     def remove_widget(self,ident,panel=None):
         panel=panel or self.tabs.currentWidget()
         def remove(state):
@@ -338,6 +398,7 @@ class StocksPage(QWidget):
             for key,layout in dashboard['layouts'].items():dashboard['layouts'][key]=ENGINE.repair([g for g in layout if g['i']!=ident],dashboard['settings']['compact'])
         self.layout_store.mutate('Remove widget',remove)
         self.status.setText('Widget removed · Undo restores the block and its notes.')
+        self.toast.adjustSize();self.toast.move(max(8,self.width()-self.toast.width()-24),max(8,self.height()-self.toast.height()-24));self.toast.show();self.toast.raise_();self.toast_timer.start()
     def duplicate_widget(self,ident,panel=None):
         panel=panel or self.tabs.currentWidget();new_id=uuid.uuid4().hex
         def duplicate(state):
@@ -464,6 +525,8 @@ class StocksPage(QWidget):
     def choose_dashboard(self,*_):
         ident=self.dashboards.currentData()
         if not ident:return
+        if ident.startswith('stock:'):
+            self.tabs.setCurrentWidget(self.research_tabs[ident[6:]]);return
         reserved={'positions':self.watchlist_page,'trade-history':self.history_page,'market-news':self.news_page}
         if ident in reserved:self.tabs.setCurrentWidget(reserved[ident])
         else:self.page_id=ident;self.tabs.setCurrentWidget(self.dashboard_page)
@@ -474,12 +537,17 @@ class StocksPage(QWidget):
     def open_symbol(self,ticker):
         ticker=symbol(ticker)
         if ticker not in self.research_tabs:
-            panel=ResearchPanel(self,ticker);self.research_tabs[ticker]=panel;self.tabs.addTab(panel,ticker+' · Research')
+            if len(self.research_tabs)>=30:self.status.setText('Close a research tab before opening another stock (limit 30).');return
+            panel=ResearchPanel(self,ticker);panel.return_panel=self.tabs.currentWidget()
+            if isinstance(panel.return_panel,ResearchPanel):panel.return_panel=self.dashboard_page
+            self.research_tabs[ticker]=panel;self.tabs.addTab(panel,ticker+' · Research')
         self.tabs.setCurrentWidget(self.research_tabs[ticker]);self.selected_symbol=ticker;self.ticker.setText(ticker);self.reload()
     def close_research_tab(self,index):
         panel=self.tabs.widget(index)
         if not isinstance(panel,ResearchPanel):return
-        self.flush_notes();self.research_tabs.pop(panel.ticker,None);self.tabs.removeTab(index);panel.deleteLater()
+        self.flush_notes();self.research_tabs.pop(panel.ticker,None)
+        if self.tabs.currentWidget() is panel:self.tabs.setCurrentWidget(panel.return_panel)
+        self.tabs.removeTab(index);panel.deleteLater();self.reload()
     def customize_stock(self,checked):
         if not self.stock_view:return
         ticker=self.selected_symbol
@@ -497,7 +565,11 @@ class StocksPage(QWidget):
         dashboard=self.store.state['newsPages'][self.news_sector]
         if not any(w['type']=='headlines' for w in dashboard['widgets']):
             block=widget('headlines');dashboard['widgets'].append(block)
-            for key,layout in dashboard['layouts'].items():dashboard['layouts'][key]=ENGINE.insert(layout,dict(i=block['id'],x=0,y=0,w=12,h=32),True)
+            sizes=self.store.state.get('newsPanelSizes',[320,320])
+            for key,layout in dashboard['layouts'].items():
+                for g in layout:g['h']=max(18,min(120,round(sizes[1]/10)))
+                geometry=dict(i=block['id'],x=0,y=0,w=12,h=max(18,min(120,round(sizes[0]/10))))
+                dashboard['layouts'][key]=ENGINE.move([*layout,geometry],block['id'],geometry,dashboard['settings']['compact'])
     def select_sector(self,*_):
         self.news_sector=self.sectors.currentData() or 'all';self.ensure_news_page();self.render_panel(self.news_page)
     def widget_symbol(self,w):return self.selected_symbol if self.stock_view and w['config'].get('followSymbol') else w['config'].get('symbol','AAPL')
@@ -505,19 +577,34 @@ class StocksPage(QWidget):
     def trade_rows(self):return self.ledger_component.trade_rows if hasattr(self,'ledger_component') else []
     def selected_ticker(self):
         row=self.watchlist_table.currentRow();return self.watchlist_table.item(row,0).text() if row>=0 else None
-    def selected_watchlist(self):return next(w for w in self.store.state['watchlists'] if w['id']==self.watchlists.currentData())
-    def add_symbol(self):
+    def selected_watchlist(self,ident=None):return next((w for w in self.store.state['watchlists'] if w['id']==(ident or self.watchlists.currentData())),self.store.state['watchlists'][0])
+    def new_watchlist(self):
+        if len(self.store.state['watchlists'])>=20:self.status.setText('Limit: 20 watchlists.');return
+        name,ok=QInputDialog.getText(self,'New watchlist','Name')
+        if ok and name.strip():
+            state=deepcopy(self.store.state);ident=uuid.uuid4().hex;state['watchlists'].append(dict(id=ident,name=name.strip(),symbols=[]))
+            if self.commit(state):return ident
+    def rename_watchlist(self,ident=None):
+        listing=self.selected_watchlist(ident);name,ok=QInputDialog.getText(self,'Rename watchlist','Name',text=listing['name'])
+        if ok and name.strip():
+            state=deepcopy(self.store.state);next(w for w in state['watchlists'] if w['id']==listing['id'])['name']=name.strip();self.commit(state)
+    def delete_watchlist(self,ident=None):
+        if len(self.store.state['watchlists'])==1:self.status.setText('Keep at least one watchlist.');return
+        listing=self.selected_watchlist(ident)
+        if QMessageBox.question(self,'Delete watchlist','Delete '+listing['name']+'? Saved trades are retained.')==QMessageBox.StandardButton.Yes:
+            state=deepcopy(self.store.state);state['watchlists']=[w for w in state['watchlists'] if w['id']!=listing['id']];self.commit(state)
+    def add_symbol(self,listing_id=None):
         ticker,ok=QInputDialog.getText(self,'Add ticker','US ticker')
         if ok:
             try:
-                ticker=symbol(ticker);state=deepcopy(self.store.state);listing=next(w for w in state['watchlists'] if w['id']==self.watchlists.currentData())
+                ticker=symbol(ticker);state=deepcopy(self.store.state);listing=next(w for w in state['watchlists'] if w['id']==self.selected_watchlist(listing_id)['id'])
                 if ticker not in listing['symbols']:listing['symbols'].append(ticker)
                 self.commit(state)
             except ValueError as exc:self.status.setText(str(exc))
-    def remove_symbol(self):
-        ticker=self.selected_ticker()
+    def remove_symbol(self,listing_id=None,ticker=None):
+        ticker=ticker or self.selected_ticker()
         if ticker:
-            state=deepcopy(self.store.state);listing=next(w for w in state['watchlists'] if w['id']==self.watchlists.currentData());listing['symbols']=[s for s in listing['symbols'] if s!=ticker];self.commit(state)
+            state=deepcopy(self.store.state);listing=next(w for w in state['watchlists'] if w['id']==self.selected_watchlist(listing_id)['id']);listing['symbols']=[s for s in listing['symbols'] if s!=ticker];self.commit(state)
     def sell_selected(self):
         ticker=self.selected_ticker()
         if ticker:self.sale_scenario(ticker)
@@ -526,6 +613,7 @@ class StocksPage(QWidget):
     def source_label(self,value,kind,key):return ('Cached · ' if value.get('stale') else '')+value.get('source','') if value else self.failures.get(kind+':'+key,'Not loaded · Refresh')
     def render_metrics(self):
         portfolio=self.store.portfolio();self.metrics[0].value.setText(money(portfolio['basis']));self.metrics[1].value.setText(money(portfolio['realized']))
+        self.data_layer.subscribe({('quote',ticker+'|1d') for ticker,holding in portfolio['holdings'].items() if holding['quantity']},'portfolio-summary')
         total=0;covered=0;self.unpriced=[]
         for ticker,p in portfolio['holdings'].items():
             if not p['quantity']:continue
@@ -533,7 +621,9 @@ class StocksPage(QWidget):
             if value and not value.get('demo') and not value.get('stale') and value.get('currency')=='USD':total+=float(p['quantity'])*value['price'];covered+=1
             else:self.unpriced.append(ticker+' · No usable live USD quote')
         self.metrics[2].value.setText(money(total) if covered else '—');self.metrics[2].caption.setText('PARTIAL MARKET VALUE' if self.unpriced else 'MARKET VALUE')
-        self.metrics[2].description.setText(f'{covered} of {covered+len(self.unpriced)} positions priced' if covered or self.unpriced else 'No positions yet · record a trade to start')
+        self.metrics[2].description.setText((f'{covered} of {covered+len(self.unpriced)} positions priced'+(' · Missing: '+', '.join(s.split(' · ')[0] for s in self.unpriced[:3]) if self.unpriced else '')) if covered or self.unpriced else 'No positions yet · record a trade to start')
+        for metric in self.metrics:
+            metric.value.setToolTip(metric.value.text());metric.description.setToolTip(metric.description.text())
         self.valuation_details.setVisible(bool(self.unpriced))
     def show_unpriced(self):QMessageBox.information(self,'Positions excluded from market value','\n'.join(self.unpriced))
     def view_tables(self):
@@ -576,7 +666,7 @@ class StocksPage(QWidget):
                 state=validate_workspace(json.loads(Path(path).read_text()))
                 if QMessageBox.question(self,'Import investments','Replace investment data with this file?')!=QMessageBox.StandardButton.Yes:return
                 self.page_id='home';self.tabs.setCurrentWidget(self.dashboard_page);self.commit(state)
-            except (ValueError,OSError) as exc:self.status.setText(str(exc))
+            except (ValueError,OSError) as exc:self.status.setText('Could not import investments: '+str(exc))
     def export_workspace(self):
         self.flush_notes();path,_=QFileDialog.getSaveFileName(self,'Export investments','investments-workspace.json','JSON files (*.json)')
         if path:write_json(Path(path),self.store.state)
@@ -595,11 +685,11 @@ class StocksPage(QWidget):
     def selected_trade(self):
         index=self.trade_table.currentRow()
         return self.trade_rows[index] if 0<=index<len(self.trade_rows) else None
-    def edit_trade(self):
-        row=self.selected_trade()
+    def edit_trade(self,row=None):
+        row=row or self.selected_trade()
         if row:self.record_trade(*row)
-    def delete_trade(self):
-        row=self.selected_trade()
+    def delete_trade(self,row=None):
+        row=row or self.selected_trade()
         if row and QMessageBox.question(self,'Delete trade','Delete this trade? Later sales must still have sufficient shares.')==QMessageBox.StandardButton.Yes:
             try:self.store.trade(*row,delete=True);self.reload();self.owner.refresh_investment_summary()
             except (ValueError,OSError) as exc:self.status.setText(str(exc))

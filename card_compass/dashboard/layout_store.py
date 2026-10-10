@@ -1,4 +1,4 @@
-"""Optimistic dashboard state, bounded full history and debounced durable saves."""
+"""Optimistic dashboard state, full session history and debounced durable saves."""
 from copy import deepcopy
 from PySide6.QtCore import QObject, Signal, QTimer
 
@@ -30,15 +30,17 @@ class LayoutStore(QObject):
         new = snapshot(candidate)
         if history and old != new:
             self.past.append((label, old))
-            self.past = self.past[-100:]
             self.future.clear()
         self.backend.state = candidate
+        self.schedule_save()
+        self.changed.emit()
+        self.historyChanged.emit()
+
+    def schedule_save(self):
         self.dirty = True
         self.status = 'Saving…'
         self.saveState.emit(self.status)
         self.timer.start()
-        self.changed.emit()
-        self.historyChanged.emit()
 
     def mutate(self, label, mutation):
         candidate = deepcopy(self.backend.state)

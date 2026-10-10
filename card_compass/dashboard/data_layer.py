@@ -16,19 +16,22 @@ class DataLayer(QObject):
         self.cache = read_json(directory / 'market-cache.json', {}) or {}
         self.cache = {k: dict(v, stale=True) for k, v in self.cache.items() if isinstance(v, dict)}
         self.failures, self.pending, self.loading, self.requested, self.loaded_at = {}, set(), set(), set(), {}
+        self.subscriptions,self.permanent={},set()
         self.worker = None
         self.stopping = False
         self.queue_timer = QTimer(self)
         self.queue_timer.setSingleShot(True)
         self.queue_timer.timeout.connect(self.start_requests)
         self.refresh_timer = QTimer(self)
-        self.refresh_timer.setInterval(300000)
-        self.refresh_timer.timeout.connect(lambda: self.refresh(self.requested))
+        self.refresh_timer.setInterval(60000)
+        self.refresh_timer.timeout.connect(self.refresh_due)
         self.refresh_timer.start()
         self.local_timer = QTimer(self)
         self.local_timer.setSingleShot(True)
         self.local_timer.setInterval(500)
         self.local_timer.timeout.connect(self.flush_local)
+        self.local_dirty=False
+        self.persist,self.flush_persist=None,None
         self.actions = {}
 
     @property
@@ -50,16 +53,32 @@ class DataLayer(QObject):
             return 'stale' if value else 'error'
         return 'stale' if value and value.get('stale') else 'ready' if value else 'empty'
 
-    def subscribe(self, requirements):
-        self.requested.update(requirements)
-        missing = {request for request in requirements if self.status(*request) in ('empty', 'stale') and request not in self.loading}
+    def subscribe(self, requirements, owner=None):
+        if owner is None:self.permanent.update(requirements)
+        else:self.subscriptions[owner]=set(requirements)
+        self.update_requested()
+        missing = {request for request in requirements if self.status(*request) in ('empty', 'stale') and request not in self.loading and ':'.join(request) not in self.failures}
         if self.network_enabled or self.state.get('dataMode') == 'demo':
             self.pending.update(missing)
             if missing:
                 self.queue_timer.start(0)
 
+    def update_requested(self):
+        self.requested=self.permanent.union(*self.subscriptions.values())
+        self.pending.intersection_update(self.requested)
+
+    def unsubscribe(self,owner):
+        self.subscriptions.pop(owner,None);self.update_requested()
+
+    def refresh_due(self):
+        if self.stopping or not (self.network_enabled or self.state.get('dataMode')=='demo'):return
+        intervals={'quote':300,'news':300,'modules':3600,'earnings':3600}
+        now=time.monotonic()
+        due={request for request in self.requested if now-self.loaded_at.get(request,0)>=intervals.get(request[0],300)}
+        if due:self.refresh(due)
+
     def refresh(self, requirements=None):
-        requirements = set(requirements or self.requested)
+        requirements = set(self.requested if requirements is None else requirements)
         if not self.network_enabled and self.state.get('dataMode') != 'demo':
             self.message.emit('Offline session · reconnect, then Refresh to load public data.')
             for kind, key in requirements:
@@ -78,11 +97,13 @@ class DataLayer(QObject):
         tasks = sorted(self.pending)
         self.pending.clear()
         self.loading.update(tasks)
+        if self.worker:self.worker.deleteLater()
         self.worker = MarketWorker(tasks, self.state.get('dataMode', 'auto'), self)
         self.worker.result.connect(self.result)
         self.worker.failed.connect(self.failed)
         self.worker.finished.connect(self.finished)
         for kind, key in tasks:
+            self.loaded_at[(kind,key)]=time.monotonic()
             self.changed.emit(kind + ':' + key)
         self.worker.start()
 
@@ -114,14 +135,26 @@ class DataLayer(QObject):
 
     def put_note(self, key, value):
         self.state['notes'][key] = value[:20000]
-        self.local_timer.start()
+        self.schedule_local()
+        self.changed.emit('note:'+key)
+
+    def schedule_local(self):
+        self.local_dirty=True
+        if self.persist:self.persist()
+        else:self.local_timer.start()
+
+    def saved(self,status):
+        if status=='Saved':self.local_dirty=False
 
     def flush_local(self):
         self.local_timer.stop()
+        if not self.local_dirty:return
+        if self.flush_persist:self.flush_persist();return
         try:
             self.backend.save(self.state)
         except (OSError, ValueError) as exc:
             self.message.emit('Notes could not be saved: ' + str(exc))
+        else:self.local_dirty=False
 
     def notify_local(self):
         self.changed.emit('workspace')

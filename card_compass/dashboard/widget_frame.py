@@ -1,6 +1,7 @@
 """Native block chrome and unified mouse/touch/pen/keyboard input."""
 from PySide6.QtCore import Qt, Signal, QEvent, QPointF
-from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent
+from PySide6 import QtGui
+from PySide6.QtGui import QAccessible, QAccessibleEvent, QPainter, QPen, QPalette
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenu, QLayout, QSizePolicy
 
 
@@ -90,17 +91,36 @@ class PointerHandle(QWidget):
         return super().event(event)
 
     def keyPressEvent(self, event):
-        if self.enabled:
+        if self.enabled or (event.modifiers() & (Qt.KeyboardModifier.ControlModifier|Qt.KeyboardModifier.MetaModifier) and event.key() in (Qt.Key.Key_Z,Qt.Key.Key_Y)):
             self.keyed.emit(event.key(), event.modifiers())
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def paintEvent(self,event):
+        super().paintEvent(event)
+        if self.kind=='move':
+            if self.enabled and self.hasFocus():
+                painter=QPainter(self);painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Highlight),1.5));painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1),4,4)
+            return
+        if not self.enabled:return
+        painter=QPainter(self);painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Text),1.5))
+        if self.kind=='corner':
+            for length in (4,8,12):painter.drawLine(self.width()-length-3,self.height()-3,self.width()-3,self.height()-length-3)
+        elif self.kind=='right':painter.drawLine(self.width()//2,self.height()//2-8,self.width()//2,self.height()//2+8)
+        else:painter.drawLine(self.width()//2-8,self.height()//2,self.width()//2+8,self.height()//2)
 
     def hideEvent(self, event):
         if self.pressed:
             self.pressed = False
             self.cancelled.emit()
         super().hideEvent(event)
+
+    def focusOutEvent(self,event):
+        if self.pressed:
+            self.pressed=False
+            self.cancelled.emit()
+        super().focusOutEvent(event)
 
 
 class WidgetFrame(QFrame):
@@ -123,11 +143,14 @@ class WidgetFrame(QFrame):
         header.setContentsMargins(0, 0, 0, 0)
         self.title = QLabel(block['title'])
         self.title.setObjectName('sectionTitle')
+        self.title.setMinimumWidth(0)
+        self.title.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
         self.title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         header.addWidget(self.title, 1)
         self.menu_button = QPushButton('⋯')
         self.menu_button.setObjectName('quiet')
         self.menu_button.setFixedWidth(34)
+        self.menu_button.setStyleSheet('QPushButton { padding: 0px; } QPushButton::menu-indicator { image: none; width: 0px; }')
         self.menu_button.setAccessibleName('Actions for ' + block['title'])
         self.menu = QMenu(self.menu_button)
         for label, command in [('Configure', 'configure'), ('Rename title', 'rename'), ('Duplicate', 'duplicate'),
@@ -178,6 +201,7 @@ class WidgetFrame(QFrame):
         try:
             self.component = self.factory(self)
             self.body_layout.addWidget(self.component)
+            if hasattr(self.component,'retry_button') and not self.refresh_button.isHidden():self.component.retry_button.hide()
             if getattr(self.component, 'last_error', None):
                 raise RuntimeError(self.component.last_error)
         except Exception as exc:
@@ -196,6 +220,7 @@ class WidgetFrame(QFrame):
                 item.widget().hide()
                 item.widget().deleteLater()
         self.component = None
+        self.refresh_button.hide()
         error = QLabel('This widget could not load. Your other widgets are still available.')
         error.setWordWrap(True)
         error.setToolTip(str(exc))
@@ -220,8 +245,12 @@ class WidgetFrame(QFrame):
     def set_editing(self, editing, locked=False):
         self.editing = editing
         self.header.enabled = editing and not locked
+        self.header.setFocusPolicy(Qt.FocusPolicy.StrongFocus if self.header.enabled else Qt.FocusPolicy.NoFocus)
         self.header.setCursor(Qt.CursorShape.OpenHandCursor if self.header.enabled else Qt.CursorShape.ArrowCursor)
         self.title.setText(('⠿  ' if self.header.enabled else '🔒  ' if locked else '') + self.block['title'])
+        self.title.setToolTip(self.block['title'])
+        self.header.setAccessibleName('Move '+self.block['title'])
+        self.menu_button.setAccessibleName('Actions for '+self.block['title'])
         self.body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, editing)
         self.body.setEnabled(not editing)
         if self.component:
@@ -237,15 +266,17 @@ class WidgetFrame(QFrame):
 
     def announce(self, message):
         self.setAccessibleDescription(message)
-        QAccessible.updateAccessibility(QAccessibleAnnouncementEvent(self.header, message))
+        self.header.setAccessibleDescription(message)
+        announcement=getattr(QtGui,'QAccessibleAnnouncementEvent',None)
+        QAccessible.updateAccessibility(announcement(self.header,message) if announcement else QAccessibleEvent(self.header,QAccessible.Event.DescriptionChanged))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.set_footer(self.footer_text)
         if hasattr(self, 'handles'):
-            self.handles['right'].setGeometry(self.width() - 7, 45, 7, max(0, self.height() - 58))
-            self.handles['bottom'].setGeometry(8, self.height() - 7, max(0, self.width() - 24), 7)
-            self.handles['corner'].setGeometry(self.width() - 16, self.height() - 16, 16, 16)
+            self.handles['right'].setGeometry(self.width() - 12, 45, 12, max(0, self.height() - 58))
+            self.handles['bottom'].setGeometry(8, self.height() - 12, max(0, self.width() - 32), 12)
+            self.handles['corner'].setGeometry(self.width() - 24, self.height() - 24, 24, 24)
             for handle in self.handles.values():
                 handle.raise_()
         if self.component and hasattr(self.component, 'on_size'):

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QLi
     QListWidgetItem, QLabel, QPushButton, QWidget, QAbstractItemView)
 from ..investments import widget
 from .widget_frame import WidgetFrame
-from .widget_registry import REGISTRY
+from .widget_registry import REGISTRY, create_widget
 
 WIDGET_MIME = 'application/x-finance-compass-widget'
 
@@ -52,6 +52,7 @@ class WidgetGallery(QDialog):
         self.list.currentItemChanged.connect(self.show_preview)
         self.list.itemDoubleClicked.connect(self.choose)
         self.list.dragging.connect(self.dragging)
+        self.list.dragging.connect(self.hide)
         row.addWidget(self.list, 1)
         self.preview = QWidget()
         self.preview_layout = QVBoxLayout(self.preview)
@@ -108,7 +109,7 @@ class WidgetGallery(QDialog):
         block = widget(definition.type)
         block['config'].update(watchlistId=self.layer.state['watchlists'][0]['id'], _noteKey='gallery-preview')
         def factory(frame):
-            component = definition.Component(definition, deepcopy(block['config']), frame.size(), False, lambda values:None, self.layer)
+            component = create_widget(definition, deepcopy(block['config']), frame.size(), False, lambda values:None, self.layer)
             component.footerChanged.connect(frame.set_footer)
             component.crashed.connect(frame.show_error)
             frame.set_footer(component.footer_text)
@@ -116,6 +117,7 @@ class WidgetGallery(QDialog):
         frame = WidgetFrame(block, factory)
         frame.command.connect(lambda ident, action: frame.guarded(frame.component.refresh) if action == 'refresh' and frame.component else None)
         frame.menu_button.hide()
+        frame.body.setEnabled(False)
         self.preview_layout.addWidget(frame, 1)
         self.preview_layout.addWidget(QLabel(f'Default size: {definition.defaultSize[0]} of 12 columns × {definition.defaultSize[1]*10} px tall'))
 
