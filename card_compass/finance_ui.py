@@ -230,7 +230,7 @@ class FinancePage(QWidget):
         layout = QVBoxLayout(content)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         layout.setContentsMargins(0, 0, 10, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
         controls = QHBoxLayout()
         self.month = MonthPicker(QDate.fromString(owner.profile.get('finance_month', QDate.currentDate().toString('yyyy-MM')) + '-01', 'yyyy-MM-dd'))
         if not self.month.date().isValid():

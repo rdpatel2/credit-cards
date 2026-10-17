@@ -73,3 +73,4 @@ jobs:
           tests/test_recurring_ui.py
           tests/test_research_tabs_ui.py
           tests/test_security_research_ui.py
+          tests/test_usability.py::test_compact_layout_month_controls_and_investment_padding
