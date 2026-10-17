@@ -1,7 +1,17 @@
 """Release native windows between tests so theme changes stay isolated."""
 import pytest
 from PySide6.QtCore import QEvent
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication, QMainWindow
+from card_compass.app import configure_application
+
+
+@pytest.fixture(scope='session', autouse=True)
+def desktop_application():
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    assert QFontDatabase.families(), 'Qt must have real fonts for layout and interaction tests'
+    yield app
 
 
 @pytest.fixture(autouse=True)

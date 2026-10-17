@@ -1,10 +1,11 @@
 from datetime import date
 import json
+import sqlite3
 import time
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 import pytest
-from card_compass.local_api import LocalAPI
+from card_compass.local_api import LocalAPI,read_saved
 from card_compass.finance import FinanceStore
 from card_compass.planning import PlanningStore
 from card_compass.investments import InvestmentStore
@@ -29,6 +30,18 @@ def api(tmp_path):
 
 
 def dates():return f'start={date.today().replace(day=1)}&end={date.today()}'
+
+
+def test_snapshot_releases_database_handles(api,monkeypatch):
+    connections=[];connect=sqlite3.connect
+    def tracked_connect(*args,**kwargs):
+        connection=connect(*args,**kwargs);connections.append(connection);return connection
+    monkeypatch.setattr(sqlite3,'connect',tracked_connect)
+    read_saved(api.directory,'cash_flow',date.today().replace(day=1).isoformat(),date.today().isoformat())
+    assert connections
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError,match='closed'):
+            connection.execute('SELECT 1')
 
 
 def test_auth_scopes_expiry_revocation_and_read_only_methods(api):

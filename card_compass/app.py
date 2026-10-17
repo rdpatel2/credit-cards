@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import os
 import sys
 import tempfile
 import uuid
@@ -1687,16 +1688,28 @@ class MainWindow(QMainWindow):
             event.accept()
 
 
-def main():
-    app = QApplication(sys.argv)
+def configure_application(app):
     app.setApplicationName("Finance Compass")
     app.setOrganizationName("CardCompass")
     app.setStyle("Fusion")
     app.setPalette(light_palette())
     families = set(QFontDatabase.families())
+    # Qt's Windows offscreen plugin does not discover installed system fonts.
+    if not families and sys.platform == 'win32':
+        font_directory = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts'
+        for filename in ('segoeui.ttf', 'segoeuib.ttf', 'segoeuii.ttf'):
+            font_path = font_directory / filename
+            if font_path.is_file():
+                QFontDatabase.addApplicationFont(str(font_path))
+        families = set(QFontDatabase.families())
     family = next((name for name in ("Inter", "SF Pro Text", "Segoe UI", "DejaVu Sans") if name in families), app.font().family())
     app.setFont(QFont(family, 10))
     app.setStyleSheet(STYLE)
+
+
+def main():
+    app = QApplication(sys.argv)
+    configure_application(app)
     smoke = "--smoke-test" in sys.argv
     temporary = tempfile.TemporaryDirectory(prefix="card-compass-smoke-") if smoke else None
     window = MainWindow(Path(temporary.name) if temporary else None, auto_refresh=not smoke)
