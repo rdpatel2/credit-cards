@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal, QEvent, QPointF
 from PySide6 import QtGui
 from PySide6.QtGui import QAccessible, QAccessibleEvent, QPainter, QPen, QPalette
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenu, QLayout, QSizePolicy
+from ..education import definition as term_definition
 
 
 class PointerHandle(QWidget):
@@ -135,7 +136,7 @@ class WidgetFrame(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         layout = QVBoxLayout(self)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setContentsMargins(12, 6, 12, 12)
         layout.setSpacing(4)
         self.header = PointerHandle(parent=self)
         self.header.setFixedHeight(38)
@@ -147,6 +148,10 @@ class WidgetFrame(QFrame):
         self.title.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
         self.title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         header.addWidget(self.title, 1)
+        self.confidence = QLabel('')
+        self.confidence.setObjectName('muted')
+        self.confidence.setAccessibleName('Data mode')
+        header.addWidget(self.confidence)
         self.menu_button = QPushButton('⋯')
         self.menu_button.setObjectName('quiet')
         self.menu_button.setFixedWidth(34)
@@ -169,7 +174,8 @@ class WidgetFrame(QFrame):
         layout.addWidget(self.body, 1)
         footer_row = QWidget()
         footer_layout = QHBoxLayout(footer_row)
-        footer_layout.setContentsMargins(0,0,0,0)
+        # Leave the always-available corner grip clear of the Refresh button.
+        footer_layout.setContentsMargins(0,0,16,0)
         self.footer = QLabel('')
         self.footer.setObjectName('muted')
         self.footer.setFixedHeight(28)
@@ -191,7 +197,7 @@ class WidgetFrame(QFrame):
             handle = PointerHandle(kind, self)
             handle.setAccessibleName('Resize ' + block['title'] + ' ' + kind)
             handle.setCursor(Qt.CursorShape.SizeHorCursor if kind == 'right' else Qt.CursorShape.SizeVerCursor if kind == 'bottom' else Qt.CursorShape.SizeFDiagCursor)
-            handle.setToolTip('Drag to resize; double-click to fit content. Shift + arrows resize from the header.')
+            handle.setToolTip('Drag to resize; double-click to fit content. Keyboard: Space, arrows, then Enter to apply or Escape to cancel.')
             self.handles[kind] = handle
         self.header.setAccessibleName('Move ' + block['title'])
         self.header.setToolTip('Edit layout to move. Space picks up; arrows move; Shift + arrows resize; Enter drops; Escape cancels.')
@@ -232,6 +238,10 @@ class WidgetFrame(QFrame):
 
     def set_footer(self, message):
         self.footer_text = message
+        badge = 'DEMO' if 'DEMO · illustrative only' in message else 'CACHED' if 'Cached data' in message else 'PUBLIC' if 'Public data · may be delayed' in message else 'NOT LOADED' if 'Not loaded' in message else ''
+        self.confidence.setText(badge)
+        self.confidence.setToolTip(message)
+        self.confidence.setVisible(bool(badge))
         self.footer.setToolTip(message)
         self.footer.setText(self.footer.fontMetrics().elidedText(message, Qt.TextElideMode.ElideRight, max(30,self.footer.width())))
 
@@ -248,7 +258,7 @@ class WidgetFrame(QFrame):
         self.header.setFocusPolicy(Qt.FocusPolicy.StrongFocus if self.header.enabled else Qt.FocusPolicy.NoFocus)
         self.header.setCursor(Qt.CursorShape.OpenHandCursor if self.header.enabled else Qt.CursorShape.ArrowCursor)
         self.title.setText(('⠿  ' if self.header.enabled else '🔒  ' if locked else '') + self.block['title'])
-        self.title.setToolTip(self.block['title'])
+        self.title.setToolTip(term_definition(self.block['title']) or self.block['title'])
         self.header.setAccessibleName('Move '+self.block['title'])
         self.menu_button.setAccessibleName('Actions for '+self.block['title'])
         self.body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, editing)
@@ -256,12 +266,13 @@ class WidgetFrame(QFrame):
         if self.component:
             self.component.isEditing = editing
         for handle in self.handles.values():
-            handle.enabled = editing and not locked
+            handle.enabled = not locked
+            handle.setFocusPolicy(Qt.FocusPolicy.StrongFocus if handle.enabled else Qt.FocusPolicy.NoFocus)
             handle.setVisible(handle.enabled)
 
     def set_density(self,density):
         padding=8 if density=='compact' else 12
-        self.layout().setContentsMargins(padding,6,padding,6)
+        self.layout().setContentsMargins(padding,6,padding,12)
         self.header.setFixedHeight(32 if density=='compact' else 38)
 
     def announce(self, message):

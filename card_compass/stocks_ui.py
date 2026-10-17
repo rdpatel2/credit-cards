@@ -8,10 +8,10 @@ from PySide6.QtCore import Qt, QDate, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
  QTabWidget, QDialogButtonBox, QFormLayout, QDateEdit, QSpinBox, QFileDialog,
- QInputDialog, QMessageBox, QCheckBox, QLabel, QMenu, QFrame, QSizePolicy)
+ QInputDialog, QMessageBox, QCheckBox, QLabel, QMenu, QFrame, QSizePolicy, QTextEdit)
 from .catalog import write_json
 from .investments import WIDGETS, METRICS, RANGES, widget, page, symbol, position, simulate_sale, validate_workspace, VIEW_COLUMNS, validate_view_settings
-from .investment_tax import STATUSES, DEDUCTIONS, NC_DEDUCTIONS, FIELDS, estimate_tax
+from .investment_tax import estimate_tax, coverage as tax_coverage
 from .finance_ui import dollars
 from .ui import Metric, text, ScrollSafeComboBox, ScrollSafeDoubleSpinBox
 from .market_news import SECTORS
@@ -20,6 +20,8 @@ from .dashboard.layout_engine import ENGINE, dashboard_layout
 from .dashboard.layout_store import LayoutStore
 from .dashboard.data_layer import DataLayer
 from .dashboard.widget_registry import REGISTRY, create_widget, money
+from .dashboard.data_health import DataHealthDialog
+from .education import TERMS, definition as term_definition
 from .dashboard.gallery import WidgetGallery
 from .dashboard.tools import DashboardSettings, STARTERS, starter
 from .dashboard.schema import normalize_dashboard
@@ -102,20 +104,26 @@ class TradeDialog(QDialog):
         self.quantity=ScrollSafeDoubleSpinBox()
         self.quantity.setDecimals(8)
         self.quantity.setRange(.00000001,1e9)
-        self.quantity.setValue(self.row['quantity'])
-        self.price=dollars(self.row['price'])
+        self.quantity.setValue(float(self.row['quantity']))
+        self.price=dollars(float(self.row['price']))
         self.price.setDecimals(6)
-        self.fees=dollars(self.row['fees'])
+        self.fees=dollars(float(self.row['fees']))
+        self.original_values={key:control.value() for key,control in [('quantity',self.quantity),('price',self.price),('fees',self.fees)]}
+        self.account=ScrollSafeComboBox()
+        for account in parent.store.state['investmentAccounts']:
+            self.account.addItem(account['name'],account['id'])
+        self.account.setCurrentIndex(max(0,self.account.findData(self.row.get('accountId','legacy'))))
+        form.addRow('Investment account',self.account)
         for title,entry in [('Side',self.side),('Date',self.day),('Shares',self.quantity),('Price per share (USD)',self.price),('Fees (USD)',self.fees)]:form.addRow(title,entry)
         layout.addLayout(form)
-        layout.addWidget(text('FIFO uses the oldest available lots. This records your history; it does not place a broker order. Enter execution prices manually.', 'muted',True))
+        layout.addWidget(text('FIFO uses the oldest available lots within the selected account. This records your history; it does not place a broker order. Enter execution prices manually.', 'muted',True))
         if scenario:
             self.tax_status = text('', 'muted', True)
             layout.addWidget(self.tax_status)
             tax = QPushButton('Set up / edit tax assumptions…')
             def update_tax():
-                configured = bool(parent.store.state.get('taxProfile'))
-                self.tax_status.setText('Tax assumptions saved · 2026 North Carolina only.' if configured else 'Optional: set tax assumptions to include a tax estimate. Your sale inputs stay here.')
+                profile = parent.store.state.get('taxProfile')
+                self.tax_status.setText(f"Tax scope saved · {profile['year']} · {profile.get('country','US')} / {profile['state']}. " + (tax_coverage(profile) or 'Reviewed-rate coverage available.') if profile else 'Optional: set tax assumptions to include a tax estimate. Your sale inputs stay here.')
             tax.clicked.connect(lambda: (parent.tax_settings(), update_tax()))
             layout.addWidget(tax)
             update_tax()
@@ -127,7 +135,9 @@ class TradeDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     def values(self):
-        return dict(id=self.row['id'],side=self.side.currentData(),date=self.day.date().toString('yyyy-MM-dd'),quantity=self.quantity.value(),price=self.price.value(),fees=self.fees.value())
+        numbers={key:self.row[key] if control.value()==self.original_values[key] else control.value()
+                 for key,control in [('quantity',self.quantity),('price',self.price),('fees',self.fees)]}
+        return dict(self.row,side=self.side.currentData(),date=self.day.date().toString('yyyy-MM-dd'),accountId=self.account.currentData(),**numbers)
 
 class DashboardPanel(QWidget):
     def __init__(self, owner, ident):
@@ -183,12 +193,14 @@ class StocksPage(QWidget):
         self.mode=ScrollSafeComboBox();self.mode.addItem('Public market data','auto');self.mode.addItem('Demo preview','demo')
         self.mode.setCurrentIndex(self.mode.findData(self.store.state.get('dataMode','auto')));self.mode.currentIndexChanged.connect(self.set_mode);toolbar.addWidget(self.mode)
         utilities=QPushButton('Tools');menu=QMenu(utilities)
-        for label,handler in [('View settings',self.configure_views),('Import investments…',self.import_workspace),('Export investments…',self.export_workspace),('Tax assumptions…',self.tax_settings)]:menu.addAction(label,handler)
+        for label,handler in [('Market data health…',self.show_data_health),('Investing terms…',self.show_investing_terms),('Portfolio allocation…',self.show_allocation),('Account performance…',self.show_performance),('Monthly account risk / factors…',self.show_risk),('Compare / screen securities…',self.show_security_research),('Investment accounts…',self.manage_accounts),('Import broker CSV…',self.import_broker_csv),('Dividends / yearly review…',self.show_dividends),('View settings',self.configure_views),('Import investments…',self.import_workspace),('Export investments…',self.export_workspace),('Tax assumptions…',self.tax_settings)]:menu.addAction(label,handler)
         utilities.setMenu(menu);toolbar.addWidget(utilities);layout.addLayout(toolbar)
-        self.metrics=[Metric('Remaining cost basis','Across all saved positions'),Metric('Realized gain / loss','FIFO · recorded sales'),Metric('Market value','USD positions with usable live quotes')]
+        self.alerts_menu_action=menu.addAction('Market alerts…',self.show_market_alerts)
+        self.metrics=[Metric('Remaining cost basis','Across all saved positions'),Metric('Realized gain / loss','FIFO · recorded sales'),Metric('Market value','USD positions with usable public quotes')]
         self.summary_tiles=QWidget();row=QHBoxLayout(self.summary_tiles);row.setContentsMargins(0,0,0,0)
         self.summary_tiles.setFixedHeight(106)
         for metric in self.metrics:
+            metric.caption.setToolTip(term_definition(metric.caption.text()))
             metric.set_compact();metric.setFixedHeight(106);metric.setMinimumWidth(0)
             metric.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
             for label in (metric.caption,metric.value,metric.description):
@@ -197,8 +209,14 @@ class StocksPage(QWidget):
             row.addWidget(metric,1)
         self.valuation_details=QPushButton('See unpriced positions');self.valuation_details.setObjectName('quiet');self.valuation_details.clicked.connect(self.show_unpriced);row.addWidget(self.valuation_details)
         layout.addWidget(self.summary_tiles)
-        self.status=StatusLabel('Start with a watchlist or Record trade. Use Edit layout to arrange blocks.')
+        self.status=StatusLabel('Start with a watchlist or Record trade. Drag widget edges to resize; Edit layout to move.')
         self.status_row=QHBoxLayout();self.status_row.addWidget(self.status,1);layout.addLayout(self.status_row)
+        self.health_button=QPushButton('Data health');self.health_button.setObjectName('rowAction')
+        self.health_button.clicked.connect(self.show_data_health);self.status_row.addWidget(self.health_button)
+        self.alerts_button=QPushButton('Alerts (0)');self.alerts_button.setObjectName('rowAction')
+        self.alerts_button.setToolTip('Local market reminders; checks run while Finance Compass is open.')
+        self.alerts_button.clicked.connect(self.show_market_alerts);self.status_row.addWidget(self.alerts_button)
+        self.data_layer.changed.connect(self.update_data_health)
         controls=QHBoxLayout()
         self.dashboards=ScrollSafeComboBox();self.dashboards.setMinimumContentsLength(10);self.dashboards.setSizeAdjustPolicy(self.dashboards.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.dashboards.currentIndexChanged.connect(self.choose_dashboard);controls.addWidget(self.dashboards,1)
@@ -228,7 +246,7 @@ class StocksPage(QWidget):
         for index in range(4):
             for side in (self.tabs.tabBar().ButtonPosition.LeftSide,self.tabs.tabBar().ButtonPosition.RightSide):self.tabs.tabBar().setTabButton(index,side,None)
         self.tabs.currentChanged.connect(self.tab_changed)
-        self.data_layer.actions=dict(open_symbol=self.open_symbol,open_url=lambda url:QDesktopServices.openUrl(QUrl(url)),record_trade=self.record_trade,add_symbol=self.add_symbol,sale_scenario=self.sale_scenario,edit_trade=self.edit_trade,delete_trade=self.delete_trade,remove_symbol=self.remove_symbol,new_watchlist=self.new_watchlist,rename_watchlist=self.rename_watchlist,delete_watchlist=self.delete_watchlist)
+        self.data_layer.actions=dict(open_symbol=self.open_symbol,open_url=lambda url:QDesktopServices.openUrl(QUrl(url)),record_trade=self.record_trade,import_broker_csv=self.import_broker_csv,add_symbol=self.add_symbol,sale_scenario=self.sale_scenario,edit_trade=self.edit_trade,delete_trade=self.delete_trade,remove_symbol=self.remove_symbol,new_watchlist=self.new_watchlist,rename_watchlist=self.rename_watchlist,delete_watchlist=self.delete_watchlist)
         self.data_layer.message.connect(self.status.setText)
         self.data_layer.changed.connect(lambda key:self.render_metrics() if key=='workspace' or key.startswith('quote:') and key.endswith('|1d') else None)
         self.layout_store.changed.connect(self.reload);self.layout_store.historyChanged.connect(self.update_history)
@@ -244,6 +262,11 @@ class StocksPage(QWidget):
         self.toast.hide();self.toast_timer=QTimer(self);self.toast_timer.setSingleShot(True);self.toast_timer.setInterval(8000);self.toast_timer.timeout.connect(self.toast.hide)
         self.ensure_news_page()
         self.reload()
+        from .market_alerts_ui import MarketAlertEngine
+        self.alert_engine=MarketAlertEngine(self)
+        self.alert_engine.changed.connect(self.update_alert_count)
+        self.alert_engine.status.connect(self.status.setText)
+        self.update_alert_count()
         if self.store.error:self.status.setText(self.store.error)
 
     def panels(self):return [self.dashboard_page,self.watchlist_page,self.history_page,self.news_page,*self.research_tabs.values()]
@@ -294,7 +317,7 @@ class StocksPage(QWidget):
         for panel in self.panels():self.render_panel(panel)
         for panel in (self.dashboard_page,self.watchlist_page,self.history_page,self.news_page):
             self.tabs.setTabText(self.tabs.indexOf(panel),self.dashboard_for(panel)['name'])
-        domain={key:self.store.state.get(key) for key in ('trades','watchlists','notes','viewSettings','dataMode')}
+        domain={key:self.store.state.get(key) for key in ('trades','watchlists','notes','viewSettings','dataMode','investmentAccounts')}
         if domain!=getattr(self,'_domain',None):
             self._domain=domain;self.data_layer.notify_local();self.render_metrics()
         self.apply_view_settings();self.update_history()
@@ -303,15 +326,16 @@ class StocksPage(QWidget):
         self.layout_store.mutate('Arrange blocks',lambda state:self.dashboard_for(panel,state)['layouts'].__setitem__(size,deepcopy(layout)))
     def set_editing(self,editing):
         for panel in self.panels():panel.canvas.set_editing(editing)
-        self.status.setText('Edit mode · drag headers, resize edges, or use Space + arrows. Escape cancels.' if editing else 'View mode · content is interactive. Edit layout to arrange blocks.')
+        self.status.setText('Edit mode · drag headers, resize edges, or use Space + arrows. Escape cancels.' if editing else 'Drag a widget edge or corner to resize. Edit layout to move widgets.')
     def layout_help(self):
         QMessageBox.information(self,'Arrange your dashboard',
             '1. Turn on Edit layout. Drag any widget header to move it.\n'
             '2. Drop near a widget’s left or right edge to create columns; drop above or below to insert. The blue preview shows the result.\n'
-            '3. Drag a right or bottom edge, or the corner, to resize. Double-click an edge to fit the content.\n'
+            '3. Resize any unlocked widget at any time: drag a right or bottom edge, or the corner. Double-click an edge to fit the content.\n'
             '4. Use ⋯ to configure, duplicate, move to another dashboard, expand, lock or remove a widget.\n'
             '5. Turn Edit layout off to use tables and notes. Changes save automatically; Undo and Redo recover previous layouts.\n\n'
             'Keyboard: focus a header, Space to pick up, arrows to move, Shift + arrows to resize, Enter to drop, Escape to cancel.\n'
+            'To resize without Edit layout, focus a resize handle, press Space, use arrows, then Enter to apply or Escape to cancel.\n'
             'Dashboard tools → Dashboard settings lets you turn off gap closing for free placement.')
     def announce(self,message):self.status.setText(message)
     def update_history(self):
@@ -319,7 +343,7 @@ class StocksPage(QWidget):
         self.undo_button.setToolTip('Undo '+self.layout_store.past[-1][0] if self.layout_store.past else 'Nothing to undo')
         if hasattr(self,'toast') and (not self.layout_store.past or self.layout_store.past[-1][0]!='Remove widget'):self.toast.hide()
     def commit(self,state,render=True):
-        try:self.layout_store.replace(state);self.layout_store.flush();return True
+        try:self.layout_store.replace(state);return self.layout_store.flush()
         except (ValueError,OSError) as exc:self.status.setText(str(exc));return False
     def flush_notes(self):
         self.data_layer.flush_local();self.layout_store.flush()
@@ -624,12 +648,35 @@ class StocksPage(QWidget):
             if not p['quantity']:continue
             value=self.data('quote',ticker+'|1d')
             if value and not value.get('demo') and not value.get('stale') and value.get('currency')=='USD':total+=float(p['quantity'])*value['price'];covered+=1
-            else:self.unpriced.append(ticker+' · No usable live USD quote')
+            else:
+                reason = 'Demo quote' if value and value.get('demo') else 'Cached quote' if value and value.get('stale') else 'Non-USD quote' if value and value.get('currency')!='USD' else 'Quote unavailable'
+                self.unpriced.append(ticker+' · '+reason+' · Excluded from market value; use Data health to inspect or retry.')
         self.metrics[2].value.setText(money(total) if covered else '—');self.metrics[2].caption.setText('PARTIAL MARKET VALUE' if self.unpriced else 'MARKET VALUE')
         self.metrics[2].description.setText((f'{covered} of {covered+len(self.unpriced)} positions priced'+(' · Missing: '+', '.join(s.split(' · ')[0] for s in self.unpriced[:3]) if self.unpriced else '')) if covered or self.unpriced else 'No positions yet · record a trade to start')
         for metric in self.metrics:
             metric.value.setToolTip(metric.value.text());metric.description.setToolTip(metric.description.text())
         self.valuation_details.setVisible(bool(self.unpriced))
+        self.update_data_health()
+    def update_data_health(self,*_):
+        rows=self.data_layer.health()
+        issues=sum(row['status'] in ('error','stale','empty') for row in rows)
+        self.health_button.setText('Data health'+(f' · {issues} need attention' if issues else ''))
+        self.health_button.setToolTip('Inspect sources, timestamps and failed feeds. Public data may be delayed; demo and cached quotes do not value holdings.')
+    def show_data_health(self):
+        if not getattr(self,'health_dialog',None):
+            self.health_dialog=DataHealthDialog(self)
+        self.health_dialog.reload();self.health_dialog.show();self.health_dialog.raise_();self.health_dialog.activateWindow()
+    def show_investing_terms(self):
+        dialog=QDialog(self);dialog.setWindowTitle('Investing terms');dialog.resize(640,640)
+        layout=QVBoxLayout(dialog)
+        search=QLineEdit();search.setPlaceholderText('Search a term · cost basis, EPS, P/E');search.setAccessibleName('Search investing terms');layout.addWidget(search)
+        content=QTextEdit();content.setReadOnly(True);layout.addWidget(content)
+        def update(query=''):
+            entries=[(METRICS.get(key,key.title()),value) for key,value in TERMS.items()]
+            content.setPlainText('\n\n'.join(name+'\n'+value for name,value in entries if query.casefold() in (name+' '+value).casefold()) or 'No matching terms. Try a different word.')
+        search.textChanged.connect(update);update()
+        close=QPushButton('Close');close.clicked.connect(dialog.accept);layout.addWidget(close)
+        dialog.exec()
     def show_unpriced(self):QMessageBox.information(self,'Positions excluded from market value','\n'.join(self.unpriced))
     def view_tables(self):
         result={}
@@ -675,7 +722,29 @@ class StocksPage(QWidget):
     def export_workspace(self):
         self.flush_notes();path,_=QFileDialog.getSaveFileName(self,'Export investments','investments-workspace.json','JSON files (*.json)')
         if path:write_json(Path(path),self.store.state)
-    def shutdown(self):self.layout_store.flush();self.data_layer.shutdown()
+    def shutdown(self):self.alert_engine.shutdown();self.layout_store.flush();self.data_layer.shutdown()
+    def manage_accounts(self):
+        from .broker_import_ui import InvestmentAccountsDialog
+        InvestmentAccountsDialog(self).exec()
+    def import_broker_csv(self):
+        from .broker_import_ui import BrokerImportDialog
+        BrokerImportDialog(self).exec()
+    def show_allocation(self):
+        from .portfolio_analysis_ui import AllocationDialog
+        AllocationDialog(self).exec()
+    def show_performance(self):
+        from .performance_ui import PerformanceDialog
+        PerformanceDialog(self).exec()
+    def show_security_research(self):
+        from .security_research_ui import SecurityResearchDialog
+        SecurityResearchDialog(self).exec()
+    def show_market_alerts(self):
+        from .market_alerts_ui import MarketAlertsDialog
+        MarketAlertsDialog(self).exec()
+    def update_alert_count(self):
+        count=sum(not event['read'] for event in self.alert_engine.state()['events'])
+        self.alerts_menu_action.setText(f'Market alerts… ({count} unread)')
+        self.alerts_button.setText(f'Alerts ({count})')
     def record_trade(self,ticker=None,row=None,watchlist_id=None):
         if not isinstance(ticker,str):
             ticker,ok=QInputDialog.getText(self,'Record trade','Ticker',text=self.selected_symbol)
@@ -699,21 +768,23 @@ class StocksPage(QWidget):
             try:self.store.trade(*row,delete=True);self.reload();self.owner.refresh_investment_summary()
             except (ValueError,OSError) as exc:self.status.setText(str(exc))
     def tax_settings(self):
-        dialog=QDialog(self);dialog.setWindowTitle('Sale estimate · 2026 North Carolina');layout=QVBoxLayout(dialog);form=QFormLayout()
-        existing=self.store.state.get('taxProfile') or {}
-        status=ScrollSafeComboBox()
-        for key,title in STATUSES.items():status.addItem(title,key)
-        status.setCurrentIndex(max(0,status.findData(existing.get('filingStatus','single'))));form.addRow('Filing status',status)
-        fields={}
-        for key,title in FIELDS.items():
-            initial=existing.get(key,DEDUCTIONS[status.currentData()] if key=='deduction' else NC_DEDUCTIONS[status.currentData()] if key=='stateDeduction' else 0)
-            fields[key]=dollars(initial);form.addRow(title,fields[key])
-        status.currentIndexChanged.connect(lambda:(fields['deduction'].setValue(DEDUCTIONS[status.currentData()]),fields['stateDeduction'].setValue(NC_DEDUCTIONS[status.currentData()])))
-        layout.addLayout(form)
-        layout.addWidget(text('Estimate for 2026 full-year NC residents only. Include realized gains from this ledger and other accounts in the income inputs. Loss scenarios require separate review; wash sales, carryforwards, AMT, credits, and corporate actions are not modeled.','muted',True))
-        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
-        if dialog.exec()==QDialog.DialogCode.Accepted:
-            state=deepcopy(self.store.state);state['taxProfile']=dict(year=2026,state='NC',filingStatus=status.currentData(),**{key:entry.value() for key,entry in fields.items()});self.commit(state)
+        from .investment_tax_ui import TaxProfileDialog
+        dialog=TaxProfileDialog(self)
+        while dialog.exec()==QDialog.DialogCode.Accepted:
+            try:
+                self.data_layer.flush_local()
+                if not self.layout_store.flush():raise OSError('Pending workspace changes could not be saved. Retry before saving tax assumptions.')
+                state=deepcopy(self.store.state);state['taxProfile']=dialog.values()
+                self.store.save(state);return
+            except (ValueError,OSError) as exc:dialog.error.setText(str(exc))
+
+    def show_dividends(self):
+        from .dividends_ui import DividendReviewDialog
+        DividendReviewDialog(self).exec()
+
+    def show_risk(self):
+        from .risk_analysis_ui import RiskAnalysisDialog
+        RiskAnalysisDialog(self).exec()
     def sale_scenario(self,ticker):
         dialog=TradeDialog(self,ticker,scenario=True)
         while dialog.exec()==QDialog.DialogCode.Accepted:
@@ -721,9 +792,16 @@ class StocksPage(QWidget):
                 trades=self.store.state['trades'].get(ticker,[]);sale=dialog.values();result=simulate_sale(trades,sale)
                 message=f"Short-term gain: {money(result['shortGain'])}\nLong-term gain: {money(result['longGain'])}\n"
                 profile=self.store.state.get('taxProfile')
-                has_losses=result['hasLoss'] or any(d['gain']<0 for d in position(trades)['disposals'])
-                if profile and sale['date'][:4]=='2026' and not has_losses:
-                    tax=estimate_tax(profile,result['shortGain'],result['longGain']);message+=f"\nIncremental federal: {money(tax['federal'])}\nIncremental NC: {money(tax['state'])}\nTotal estimate: {money(tax['total'])}"
-                else:message+='\nTax estimate unavailable: set up 2026 NC assumptions; loss histories need review.'
+                account=next(a for a in self.store.state['investmentAccounts'] if a['id']==sale['accountId'])
+                has_losses=result['hasLoss'] or any(d['gain']<0 and d['accountId']==sale['accountId'] for d in position(trades)['disposals'])
+                reason='Set tax assumptions first.' if not profile else tax_coverage(profile)
+                if account['kind']!='brokerage':reason='Requires an explicitly taxable brokerage account; retirement and unknown account distributions need separate review.'
+                elif profile and sale['date'][:4]!=str(profile['year']):reason='Hypothetical sale year must match the saved tax year.'
+                elif has_losses:reason='Loss scenarios and recorded loss histories need separate review.'
+                if not reason:
+                    tax=estimate_tax(profile,result['shortGain'],result['longGain'])
+                    state_line=f"Incremental NC: {money(tax['state'])}" if tax['stateCovered'] else 'State taxes excluded from this federal-only estimate.'
+                    message+=f"\nIncremental federal (including NIIT): {money(tax['federal'])}\n{state_line}\nCovered incremental estimate: {money(tax['total'])}\nRate source: {tax['source']}\nRates reviewed: {tax['rateReviewed']}"
+                else:message+='\nTax estimate unavailable: '+reason
                 QMessageBox.information(self,'FIFO sale scenario',message);return
             except (ValueError,OSError) as exc:dialog.error.setText(str(exc))

@@ -2,8 +2,10 @@
 from copy import deepcopy
 import time
 from PySide6.QtCore import QObject, Signal, QTimer
-from ..market_data import MarketWorker
+from ..market_data import MarketWorker, timestamp
 from ..catalog import read_json, write_json
+
+REFRESH_INTERVALS = {'quote': 300, 'news': 300, 'modules': 3600, 'earnings': 3600}
 
 
 class DataLayer(QObject):
@@ -16,6 +18,7 @@ class DataLayer(QObject):
         self.cache = read_json(directory / 'market-cache.json', {}) or {}
         self.cache = {k: dict(v, stale=True) for k, v in self.cache.items() if isinstance(v, dict)}
         self.failures, self.pending, self.loading, self.requested, self.loaded_at = {}, set(), set(), set(), {}
+        self.attempted_at = {}
         self.subscriptions,self.permanent={},set()
         self.worker = None
         self.mode=self.state.get('dataMode','auto');self.generation=0
@@ -42,8 +45,40 @@ class DataLayer(QObject):
     def data(self, kind, key):
         value = self.cache.get(kind + ':' + key)
         if value and bool(value.get('demo')) == (self.state.get('dataMode') == 'demo'):
+            loaded = self.loaded_at.get((kind, key))
+            if loaded is not None and time.monotonic() - loaded >= REFRESH_INTERVALS.get(kind, 300):
+                return dict(value, stale=True)
             return value
         return None
+
+    def health(self):
+        """Current subscribed feeds only; successful retrieval time is distinct from market time."""
+        rows = []
+        for kind, key in sorted(self.requested):
+            value = self.data(kind, key) or {}
+            status = self.status(kind, key)
+            rows.append(dict(kind=kind, key=key, status=status,
+                             mode='Demo' if value.get('demo') else 'Cached' if value.get('stale') else 'Public data' if value else 'Not loaded',
+                             source=value.get('source', 'Not supplied'),
+                             as_of=value.get('asOf', ''), retrieved_at=value.get('retrievedAt', ''),
+                             error=self.failures.get(kind + ':' + key, '')))
+        return rows
+
+    def describe(self, requirements):
+        values = [self.data(*request) for request in sorted(requirements)]
+        available = [value for value in values if value]
+        if not requirements:
+            return 'Saved on this device'
+        if not available:
+            return 'DEMO · illustrative only · Not loaded · Refresh to load examples' if self.state.get('dataMode') == 'demo' else 'Not loaded · Refresh to load public data'
+        mode = 'DEMO · illustrative only' if any(value.get('demo') for value in available) else 'Cached data' if any(value.get('stale') for value in available) else 'Public data · may be delayed'
+        if any(value.get('demo') for value in available) and any(value.get('stale') for value in available):
+            mode += ' · Cached data'
+        sources = ', '.join(sorted({value.get('source', 'Source not supplied') for value in available}))
+        dates = [value.get('asOf') for value in available if value.get('asOf')]
+        date_label = min(dates) if dates else 'not supplied'
+        coverage = f' · {len(available)} of {len(values)} feeds loaded' if len(available) < len(values) else ''
+        return f'{mode} · {sources} · As of {date_label}{coverage}'
 
     def status(self, kind, key):
         request = (kind, key)
@@ -66,17 +101,24 @@ class DataLayer(QObject):
                 self.queue_timer.start(0)
 
     def update_requested(self):
+        previous = self.requested
         self.requested=self.permanent.union(*self.subscriptions.values())
         self.pending.intersection_update(self.requested)
+        if previous != self.requested and not self.stopping:
+            self.changed.emit('subscriptions')
 
     def unsubscribe(self,owner):
         self.subscriptions.pop(owner,None);self.update_requested()
 
     def refresh_due(self):
-        if self.stopping or not (self.network_enabled or self.state.get('dataMode')=='demo'):return
-        intervals={'quote':300,'news':300,'modules':3600,'earnings':3600}
+        if self.stopping:return
         now=time.monotonic()
-        due={request for request in self.requested if now-self.loaded_at.get(request,0)>=intervals.get(request[0],300)}
+        for kind, key in self.requested:
+            value = self.data(kind, key)
+            if value and value.get('stale'):
+                self.changed.emit(kind + ':' + key)
+        if not (self.network_enabled or self.state.get('dataMode')=='demo'):return
+        due={request for request in self.requested if now-self.attempted_at.get(request,self.loaded_at.get(request,0))>=REFRESH_INTERVALS.get(request[0],300)}
         if due:self.refresh(due)
 
     def refresh(self, requirements=None):
@@ -107,7 +149,7 @@ class DataLayer(QObject):
         self.worker.failed.connect(lambda kind,key,message:self.failed(kind,key,message) if generation==self.generation else None)
         self.worker.finished.connect(self.finished)
         for kind, key in tasks:
-            self.loaded_at[(kind,key)]=time.monotonic()
+            self.attempted_at[(kind,key)]=time.monotonic()
             self.changed.emit(kind + ':' + key)
         self.worker.start()
 
@@ -115,12 +157,12 @@ class DataLayer(QObject):
         mode=self.state.get('dataMode','auto')
         if mode==self.mode:return
         self.mode=mode;self.generation+=1
-        self.loading.clear();self.pending.clear();self.loaded_at.clear();self.failures.clear()
+        self.loading.clear();self.pending.clear();self.loaded_at.clear();self.attempted_at.clear();self.failures.clear()
         if self.worker and self.worker.isRunning():self.worker.requestInterruption()
         if self.network_enabled or mode=='demo':self.pending.update(self.requested)
 
     def result(self, kind, key, value):
-        self.cache[kind + ':' + key] = value
+        self.cache[kind + ':' + key] = dict(value, retrievedAt=timestamp())
         self.loaded_at[(kind, key)] = time.monotonic()
         self.loading.discard((kind, key))
         self.failures.pop(kind + ':' + key, None)

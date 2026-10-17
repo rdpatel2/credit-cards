@@ -55,7 +55,9 @@ Final result: **252 passed in 154.99 seconds**. Dark/light and active-drag previ
 
 ## Using the layout
 
-Start with **Dashboard tools → Apply template → Investment overview**, or use **Add widget** and search for a block. Enable **Edit layout**, drag a header to the blue destination, and resize from an edge or corner. Disable edit mode to use tables and notes. The **⋯** menu contains configuration, rename, duplicate, move/copy, refresh, expand, lock and removal. **Undo** restores a removed block immediately. For keyboard editing, focus a header, press Space/Enter, use arrows to move or Shift+arrows to resize, then Space/Enter to drop or Escape to cancel.
+Start with **Dashboard tools → Apply template → Investment overview**, or use **Add widget** and search for a block. Every unlocked widget exposes right, bottom and corner resize handles during normal use, including unknown or failed widgets. Drag a handle to resize or double-click to fit content; tables and notes remain interactive. Keyboard resizing works by focusing a handle, pressing Space/Enter, using arrows along that handle’s axes, then Space/Enter to apply or Escape to cancel. Mouse, touch and pen share the same resize path. Sizes respect widget limits, save per dashboard/breakpoint and support Undo/Redo; narrow screens keep their single-column width.
+
+Enable **Edit layout** to drag a header to the blue destination. Disable edit mode to use tables and notes. The **⋯** menu contains configuration, rename, duplicate, move/copy, refresh, expand, lock and removal. Locked widgets cannot move or resize. **Undo** restores a removed block immediately. For keyboard movement, focus a header in edit mode, press Space/Enter, use arrows to move or Shift+arrows to resize, then Space/Enter to drop or Escape to cancel.
 
 Layouts save after 500 ms to the existing per-user native investment JSON store using atomic file replacement. Click **Failed – retry** if a write fails. Dashboard export/import and saved templates provide portable copies. **Dashboard settings** switches between gap closing and free placement and adjusts density, grid gap and motion.
 

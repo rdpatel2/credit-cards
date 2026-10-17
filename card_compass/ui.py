@@ -67,6 +67,18 @@ class FitDialog(QDialog):
         if self.size()!=target:self.resize(target)
 
     def showEvent(self,event):
+        parent=self.parentWidget()
+        while parent is not None:
+            if getattr(parent,'is_demo',False):
+                if not hasattr(self,'demo_banner') and self.layout() is not None:
+                    self.demo_banner=QLabel('DEMO · Synthetic, disposable records. Your personal profile is separate.')
+                    self.demo_banner.setObjectName('muted');self.demo_banner.setWordWrap(True)
+                    layout=self.layout()
+                    if hasattr(layout,'insertWidget'):layout.insertWidget(0,self.demo_banner)
+                    else:layout.addWidget(self.demo_banner)
+                    self.setWindowTitle('DEMO · '+self.windowTitle())
+                break
+            parent=parent.parentWidget()
         self.prepare_text_layout();super().showEvent(event)
         if self.isMaximized() or self.isFullScreen():return
         bounds=self.screen().availableGeometry()

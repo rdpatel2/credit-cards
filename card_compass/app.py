@@ -5,6 +5,7 @@ import html
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QDate
@@ -26,9 +27,17 @@ from .discovery import GROUPS, discoverable, card_groups
 from .artwork import ArtworkCache
 from .source_audit import source_kind
 from .finance import FinanceStore
+from .cash_forecast import CashForecastStore
+from .recurring import RecurringStore
 from .finance_ui import FinancePage
 from .stocks_ui import StocksPage
 from .investments import InvestmentStore
+from .planning import PlanningStore
+from .planning_ui import PlanningPage
+from .reports_ui import ReportsPage
+from .automations_ui import AutomationEngine
+from .local_api import LocalAPI
+from .onboarding_ui import OnboardingPage
 from .theme import color as theme_color, themed, stylesheet as theme_stylesheet, palette as theme_palette
 
 from .ui import STYLE, Metric, CardArt, CardDelegate, CARD_ROLE, icon, text, surface, light_palette, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, SearchableCategoryBox, FitDialog as QDialog
@@ -53,8 +62,18 @@ def spin(value=0, maximum=100000, prefix="", suffix=""):
     return widget
 
 
+class ActivatingTable(QTableWidget):
+    def keyPressEvent(self, event):
+        # Native styles differ on whether Return activates a table item.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.currentItem() is not None:
+            self.itemActivated.emit(self.currentItem())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 def table(headers):
-    widget = QTableWidget(0, len(headers))
+    widget = ActivatingTable(0, len(headers))
     widget.setHorizontalHeaderLabels(headers)
     widget.verticalHeader().hide()
     widget.setAlternatingRowColors(False)
@@ -237,29 +256,35 @@ class CustomCard(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, directory: Path | None = None, auto_refresh=True):
+    def __init__(self, directory: Path | None = None, auto_refresh=True, demo_session=False):
         super().__init__()
         self.setPalette(light_palette())
-        self.setWindowTitle("Finance Compass")
+        self.is_demo = bool(demo_session)
+        self.demo_windows = []
+        self.demo_host = self
+        self.setWindowTitle("Finance Compass · DEMO (discarded on close)" if self.is_demo else "Finance Compass")
         self.resize(1380, 900)
         self.setMinimumSize(1040, 720)
         self.directory = directory or data_dir()
         self.store = CatalogStore(self.directory)
         self.profile = load_profile(self.directory)
         self.finance_store = FinanceStore(self.directory)
+        self.planning_store = PlanningStore(self.directory)
+        self.cash_forecast_store = CashForecastStore(self.directory)
+        self.recurring_store = RecurringStore(self.directory)
         self.investment_store = InvestmentStore(self.directory)
         QApplication.instance().setProperty('financeTheme', self.profile.get('theme', 'light'))
         self.catalog = self.store.load()
         self.worker = None
         self.closing = False
         self.current_card = None
-        self.artwork = ArtworkCache(self.directory, self, network_enabled=auto_refresh)
+        self.artwork = ArtworkCache(self.directory, self, network_enabled=auto_refresh and not self.is_demo)
         self.build_ui()
         self.reload_cards()
         self.apply_theme(self.profile.get('theme') == 'dark', persist=False)
         self.update_freshness()
         self.recalculate()
-        if auto_refresh:
+        if auto_refresh and not self.is_demo:
             QTimer.singleShot(0, self.refresh)
 
     def build_ui(self):
@@ -290,7 +315,9 @@ class MainWindow(QMainWindow):
         side.addWidget(text('YOUR WORKSPACE', 'navSection'))
         side.addSpacing(8)
         self.navigation = {}
-        for key, caption, glyph in [('overview', 'Overview', 'explore'), ('budget', 'Budget && cash flow', 'spending'), ('stocks', 'Investments', 'matches'),
+        for key, caption, glyph in [('start', 'Get started', 'explore'), ('overview', 'Overview', 'explore'), ('budget', 'Budget && cash flow', 'spending'),
+                                    ('accounts', 'Accounts && net worth', 'wallet'), ('goals', 'Savings goals', 'spending'),
+                                    ('stocks', 'Investments', 'matches'), ('reports', 'Reports && export', 'statement'),
                                     ('explore', 'Find cards', 'explore'), ('matches', 'Your matches', 'matches'), ('wallet', 'My wallet', 'wallet'),
                                     ('spending', 'Spending', 'spending'), ('imports', 'Statements', 'statement'),
                                     ('breakdown', 'Breakdown', 'spending'), ('coverage', 'Coverage', 'coverage')]:
@@ -344,6 +371,10 @@ class MainWindow(QMainWindow):
         menu.addAction('Back up all my data…', self.backup_data)
         menu.addAction('Restore a backup…', self.restore_data)
         backup.setMenu(menu)
+        backup.setEnabled(not self.is_demo)
+        if self.is_demo:
+            backup.setToolTip('Demo finances are discarded on close. Make a backup from your real workspace.')
+        menu.aboutToShow.connect(self.update_backup_status)
         side.addWidget(backup)
         side.addSpacing(20)
         side.addWidget(text('CARD DATA', 'navSection'))
@@ -380,6 +411,9 @@ class MainWindow(QMainWindow):
         for action in (self.theme_toggle, prefs, backup):
             side.removeWidget(action)
             fixed_layout.addWidget(action)
+        self.backup_status = text('', 'sideStatus', True)
+        fixed_layout.addWidget(self.backup_status)
+        self.update_backup_status()
         side_panel_layout.addWidget(fixed_actions)
         shell.addWidget(side_panel)
 
@@ -404,6 +438,13 @@ class MainWindow(QMainWindow):
         self.header_theme_toggle.toggled.connect(self.apply_theme)
         heading.addWidget(self.header_theme_toggle)
         workspace_layout.addLayout(heading)
+        if self.is_demo:
+            banner = QHBoxLayout()
+            banner.addWidget(text('DEMO · Synthetic finances and holdings. Changes are discarded on close; your real profile is separate.', 'muted', True),1)
+            reset = QPushButton('Reset demo')
+            reset.clicked.connect(self.reset_demo)
+            banner.addWidget(reset)
+            workspace_layout.addLayout(banner)
         self.pages = QStackedWidget()
         self.page_indexes = {}
         workspace_layout.addWidget(self.pages, 1)
@@ -758,7 +799,14 @@ class MainWindow(QMainWindow):
         self.overview_page = FinancePage(self)
         self.budget_page = FinancePage(self, budget=True)
         self.stocks_page = StocksPage(self)
-        for key, widget in [('overview', self.overview_page), ('budget', self.budget_page), ('stocks', self.stocks_page)]:
+        self.accounts_page = PlanningPage(self)
+        self.goals_page = PlanningPage(self, goals=True)
+        self.reports_page = ReportsPage(self)
+        self.onboarding_page = OnboardingPage(self)
+        self.automation_engine = AutomationEngine(self)
+        self.local_api = LocalAPI(self.directory)
+        for key, widget in [('overview', self.overview_page), ('budget', self.budget_page), ('stocks', self.stocks_page),
+                            ('accounts',self.accounts_page),('goals',self.goals_page),('reports',self.reports_page),('start',self.onboarding_page)]:
             self.page_indexes[key] = self.pages.addWidget(widget)
         self.build_details()
         self.timer = QTimer(self)
@@ -809,6 +857,38 @@ class MainWindow(QMainWindow):
     def refresh_investment_summary(self):
         if hasattr(self, 'overview_page'):
             self.overview_page.reload()
+
+    def refresh_planning(self):
+        for name in ('accounts_page','goals_page','onboarding_page'):
+            if hasattr(self,name):
+                getattr(self,name).reload()
+
+    def start_demo(self):
+        from .onboarding import seed_demo
+        host = self.demo_host
+        sandbox = tempfile.TemporaryDirectory(prefix='finance-compass-demo-')
+        try:
+            seed_demo(Path(sandbox.name),host.profile.get('theme','light'))
+            window = MainWindow(Path(sandbox.name),auto_refresh=False,demo_session=True)
+        except Exception:
+            sandbox.cleanup()
+            raise
+        window.demo_host = host
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,True)
+        host.demo_windows.append(window)
+        def clean_up(*_):
+            if window in host.demo_windows:
+                host.demo_windows.remove(window)
+            sandbox.cleanup()
+        window.destroyed.connect(clean_up)
+        window.show()
+        window.navigate('start')
+        return window
+
+    def reset_demo(self):
+        if self.is_demo:
+            self.demo_host.start_demo()
+            self.close()
 
     def toggle_cards(self, expanded):
         self.credit_group.setVisible(expanded)
@@ -871,9 +951,13 @@ class MainWindow(QMainWindow):
 
     def navigate(self, key):
         titles = {
+            'start': ('Your starting point.', 'Choose a path, learn with examples, and build your first useful records.'),
             'overview': ('Your finances, together.', 'Plan, spend, and invest with a clear view of your month.'),
             'budget': ('Give every dollar a purpose.', 'Income, recurring bills, category budgets, and actual spending.'),
             'stocks': ('Investments.', 'Your positions, modular dashboards, and research in one workspace.'),
+            'accounts': ('Accounts and net worth.', 'Dated assets and liabilities, manual balances, and debt scenarios.'),
+            'goals': ('Save toward what matters.', 'Emergency funds and savings targets with explicit allocations.'),
+            'reports': ('Your records, portable.', 'Export cash flow, transactions, balances, goals and investment records.'),
             'matches': ('Credit cards · matches.', 'Compare additional rewards against your saved wallet.'),
             'wallet': ('Credit cards · wallet.', 'Your cards, benefits, and reward settings.'),
             'spending': ('Credit cards · spending.', 'Monthly purchase estimates used for reward recommendations.'),
@@ -911,6 +995,8 @@ class MainWindow(QMainWindow):
             self.breakdown_page.reload()
         if key in ('overview', 'budget'):
             self.pages.currentWidget().reload()
+        if key in ('accounts','goals','start'):
+            self.pages.currentWidget().reload()
         if key == 'stocks' and self.artwork.network_enabled:
             self.stocks_page.start()
 
@@ -932,6 +1018,9 @@ class MainWindow(QMainWindow):
         self.save_profile()
 
     def backup_data(self):
+        if self.is_demo:
+            QMessageBox.information(self,'Demo session','Demo finances are discarded on close. Back up your real data from the original workspace.')
+            return
         from .backup import create_backup
         path, _ = QFileDialog.getSaveFileName(self, 'Back up all your data', 'finance-compass-backup.zip', 'Finance Compass backup (*.zip)')
         if not path:
@@ -940,11 +1029,37 @@ class MainWindow(QMainWindow):
         self.stocks_page.flush_notes()
         try:
             create_backup(self.directory, path)
-            QMessageBox.information(self, 'Backup saved', 'Saved budgets, income, wallet settings, statement history, investment trades, dashboards and notes. Keep this file somewhere you can find it again.')
+            self.profile['last_backup'] = dict(created=datetime.now(timezone.utc).isoformat(), path=str(Path(path).resolve()))
+            self.save_profile()
+            self.update_backup_status()
+            QMessageBox.information(self, 'Backup saved', 'Saved budgets, income, wallet settings, statement history, investment trades, dashboards and notes. Later changes need a new backup. Market caches and downloaded card images are not included. Keep this file somewhere you can find it again.')
         except Exception as exc:
             QMessageBox.warning(self, 'Could not save backup', str(exc))
 
+    def update_backup_status(self):
+        record = self.profile.get('last_backup')
+        date = None
+        if isinstance(record, dict):
+            try:
+                date = datetime.fromisoformat(record.get('created', '')).astimezone()
+            except (ValueError, TypeError):
+                pass
+        if date is None:
+            self.backup_status.setText('No backup recorded · back up your local data')
+            self.backup_status.setToolTip('Saving on this device is separate from a backup. Use Backup & restore to save a portable copy of your budgets, statements and investments.')
+            return
+        path = record.get('path')
+        try:
+            exists = isinstance(path, str) and bool(path) and Path(path).is_file()
+        except (OSError, ValueError):
+            exists = False
+        self.backup_status.setText('Last backup: '+date.strftime('%b %d, %Y')+('' if exists else '\nFile not found at saved location'))
+        self.backup_status.setToolTip('Backup created '+date.strftime('%b %d, %Y %H:%M %Z')+'\n'+(path if isinstance(path, str) else 'Location not recorded')+'\nLater changes are not included. A file at this location is not a guarantee of a valid or up-to-date backup.')
+
     def restore_data(self):
+        if self.is_demo:
+            QMessageBox.information(self,'Demo session','Restore is available from your original workspace, not from the disposable demo.')
+            return
         from .backup import read_backup, restore_backup
         path, _ = QFileDialog.getOpenFileName(self, 'Restore all your data', '', 'Finance Compass backup (*.zip)')
         if not path:
@@ -954,6 +1069,13 @@ class MainWindow(QMainWindow):
             manifest, _ = read_backup(path)
             if QMessageBox.question(self, 'Replace current data?', f"Restore backup from {manifest.get('created', 'unknown date')}?\n\nThis replaces budgets, income, cards, statements and investments. A recovery backup of your current data will be kept. The workspace will reopen.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
+            if self.automation_engine.busy:
+                raise ValueError('Wait for the current automation to finish before restoring data.')
+            if hasattr(self, 'connected_manager') and self.connected_manager.busy:
+                raise ValueError('Wait for the current optional service request before restoring data.')
+            self.automation_engine.timer.stop()
+            self.automation_engine.stopping = True
+            self.local_api.stop()
             self.timer.stop()
             self.save_profile()
             self.stocks_page.shutdown()
@@ -964,7 +1086,7 @@ class MainWindow(QMainWindow):
             self.replacement_window = replacement
             self.restoring = True
             self.close()
-            QMessageBox.information(replacement, 'Backup restored', f'Your data is ready. Recovery copy of the previous data:\n{recovery}')
+            QMessageBox.information(replacement, 'Backup restored', f'Your data is ready. Automation jobs are paused; review destinations before enabling them again. Recovery copy of the previous data:\n{recovery}')
         except Exception as exc:
             if recovery is not None and not getattr(self, 'restoring', False):
                 try:
@@ -972,6 +1094,8 @@ class MainWindow(QMainWindow):
                 except Exception as rollback_error:
                     QMessageBox.warning(self, 'Recovery backup available', f'Restore could not complete. Your original data is backed up at {recovery}.\n{rollback_error}')
             self.stocks_page.stopping = False
+            self.automation_engine.stopping = False
+            self.automation_engine.timer.start()
             QMessageBox.warning(self, 'Could not restore backup', str(exc))
 
     def add_spend_row(self, category):
@@ -1535,6 +1659,18 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
+        if hasattr(self, 'connected_manager') and not self.connected_manager.shutdown():
+            self.hide()
+            event.ignore()
+            return
+        if hasattr(self, 'local_api'):
+            self.local_api.stop()
+        if hasattr(self, 'automation_engine') and not self.automation_engine.shutdown():
+            self.hide()
+            event.ignore()
+            return
+        for window in list(self.demo_windows):
+            window.close()
         if not getattr(self, 'restoring', False):
             self.stocks_page.shutdown()
         self.artwork.close()
@@ -1628,7 +1764,8 @@ def main():
         if window.profile['spend'].get('groceries') != 2:
             raise RuntimeError('Packaged one-off recommendation exclusion failed')
         window.sort_spending(1)
-        if window.spending.item(0, 0).data(Qt.ItemDataRole.UserRole) != 'groceries' or window.coverage_widgets['groceries'].property('coverageBand') != 'low':
+        spending_values = [window.spending.item(row, 1).data(Qt.ItemDataRole.DisplayRole) for row in range(window.spending.rowCount())]
+        if spending_values != sorted(spending_values) or window.coverage_widgets['groceries'].property('coverageBand') != 'low':
             raise RuntimeError('Packaged spending sort or coverage colors failed')
         print(f"Desktop smoke test: {len(window.cards)} cards, {len(window.matches)} matches", flush=True)
         print('Dashboard smoke test: finance overview opens first; category tiles open active cards', flush=True)

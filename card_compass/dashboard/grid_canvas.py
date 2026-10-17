@@ -120,7 +120,7 @@ class GridCanvas(QGraphicsView):
         handle.finished.connect(self.finish)
         handle.cancelled.connect(self.cancel)
         handle.fitted.connect(lambda i=ident: self.auto_fit(i))
-        handle.keyed.connect(lambda key, modifiers, i=ident: self.key_move(i, key, modifiers))
+        handle.keyed.connect(lambda key, modifiers, i=ident, kind=handle.kind: self.key_move(i, key, modifiers, kind))
 
     def set_editing(self, editing):
         if not editing and self.interaction:
@@ -163,7 +163,7 @@ class GridCanvas(QGraphicsView):
         return self.mapToScene(self.viewport().mapFromGlobal(global_point.toPoint()))
 
     def begin(self, ident, global_point, kind='move', keyboard=False):
-        if not self.editing:
+        if not self.editing and kind not in ('right', 'bottom', 'corner'):
             return
         g = next(g for g in self.current_layout if g['i'] == ident)
         if g.get('locked'):
@@ -301,7 +301,7 @@ class GridCanvas(QGraphicsView):
         for handle in self.frames[i['ident']].handles.values():
             handle.pressed = False
 
-    def key_move(self, ident, key, modifiers):
+    def key_move(self, ident, key, modifiers, kind='move'):
         if self.history_key(key,modifiers):return
         if key == Qt.Key.Key_Escape:
             self.cancel()
@@ -310,14 +310,22 @@ class GridCanvas(QGraphicsView):
             if self.interaction:
                 self.finish()
             else:
-                point = self.frames[ident].header.mapToGlobal(self.frames[ident].header.rect().center())
-                self.begin(ident, QPointF(point), keyboard=True)
+                frame = self.frames[ident]
+                handle = frame.header if kind == 'move' else frame.handles[kind]
+                point = handle.mapToGlobal(handle.rect().center())
+                self.begin(ident, QPointF(point), kind=kind, keyboard=True)
             return
         directions = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0), Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
         if key in directions and self.interaction and self.interaction['ident'] == ident:
             g = next(deepcopy(g) for g in self.interaction['preview'] if g['i'] == ident)
             dx, dy = directions[key]
-            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            resize_kind = self.interaction['kind']
+            if resize_kind != 'move':
+                if resize_kind in ('right', 'corner'):
+                    g['w'] += dx
+                if resize_kind in ('bottom', 'corner'):
+                    g['h'] += dy
+            elif modifiers & Qt.KeyboardModifier.ShiftModifier:
                 g.update(w=g['w'] + dx, h=g['h'] + dy)
             else:
                 g.update(x=g['x'] + dx, y=g['y'] + dy)
@@ -396,7 +404,7 @@ class GridCanvas(QGraphicsView):
     def viewportEvent(self,event):
         # Qt proxies forward touch events, but QGraphicsView does not forward tablets.
         if event.type() in (QEvent.Type.TabletPress,QEvent.Type.TabletMove,QEvent.Type.TabletRelease):
-            if event.type()==QEvent.Type.TabletPress and self.editing:
+            if event.type()==QEvent.Type.TabletPress:
                 scene_point=self.mapToScene(event.position().toPoint())
                 for ident,proxy in self.items.items():
                     frame=self.frames[ident];local=proxy.mapFromScene(scene_point).toPoint()

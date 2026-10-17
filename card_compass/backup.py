@@ -86,6 +86,20 @@ def read_backup(path):
                 raise ValueError('The backup is missing finance tables.')
             if db.execute('PRAGMA foreign_key_check').fetchone():
                 raise ValueError('The backup has broken transaction links.')
+            from .planning import validate_planning_tables
+            validate_planning_tables(db)
+            from .shared_sync import validate_tables as validate_service_copies
+            validate_service_copies(db)
+            from .institution_balances import validate_tables as validate_institution_balances
+            validate_institution_balances(db)
+            from .cash_forecast import validate_table
+            validate_table(db)
+            from .recurring import validate_table as validate_recurring
+            validate_recurring(db)
+            from .retirement import validate_table as validate_retirement
+            validate_retirement(db)
+            from .automations import validate_table as validate_automations
+            validate_automations(db)
     return manifest, data
 
 
@@ -103,6 +117,11 @@ def restore_backup(directory, path):
                 temporary.replace(directory / name)
             else:
                 (directory / name).unlink(missing_ok=True)
+        # Export-folder consent is device-specific. Restore data and history,
+        # but pause jobs before a new app session can check due schedules.
+        from .automations import pause_restored_jobs
+        with sqlite3.connect(directory / 'transactions.sqlite3') as db:
+            pause_restored_jobs(db)
     except Exception:
         for name, content in old.items():
             if content is not None:

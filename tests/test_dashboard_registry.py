@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import pytest
+from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 from card_compass.app import MainWindow
@@ -46,6 +47,48 @@ def test_every_registered_widget_builds_without_overflow_and_has_refresh_states(
         assert frame.component is not None, (kind,frame.footer.text())
         assert frame.body.geometry().bottom()<frame.footer.parentWidget().geometry().top()
         assert frame.footer.parentWidget().geometry().bottom()<frame.height()
+    owner.close();owner.deleteLater();app.processEvents()
+
+
+def test_every_widget_resizes_in_view_mode_and_saves_with_undo_redo(tmp_path):
+    app=QApplication.instance() or QApplication([])
+    owner=MainWindow(tmp_path,auto_refresh=False);owner.resize(1280,1000);owner.show();owner.navigate('stocks')
+    p=owner.stocks_page
+    assert not p.edit_layout.isChecked()
+    p.set_dashboard_settings({'reducedMotion':True})
+    canvas=p.active_canvas()
+    for kind in REGISTRY.definitions:
+        ident=p.add_block(kind)
+        frame=canvas.frames[ident]
+        original=deepcopy(canvas.current_layout)
+        geometry=next(g for g in original if g['i']==ident)
+        handle=frame.handles['corner']
+        assert handle.enabled and frame.body.isEnabled() and not frame.header.enabled,kind
+        if not frame.refresh_button.isHidden():
+            refresh_rect=QRect(frame.refresh_button.mapTo(frame,QPoint()),frame.refresh_button.size())
+            assert not any(handle.geometry().intersects(refresh_rect) for handle in frame.handles.values()),kind
+        scene_start=canvas.items[ident].pos()+QPointF(handle.geometry().center())
+        canvas.ensureVisible(QRectF(scene_start-QPointF(10,10),QPointF(scene_start+QPointF(20,40))),5,5)
+        start=canvas.mapFromScene(scene_start)
+        delta=QPoint(-round(canvas.column_width),20)
+        QTest.mousePress(canvas.viewport(),Qt.MouseButton.LeftButton,pos=start)
+        QTest.mouseMove(canvas.viewport(),start+delta)
+        assert canvas.interaction and canvas.interaction['active'],kind
+        QTest.mouseRelease(canvas.viewport(),Qt.MouseButton.LeftButton,pos=start+delta)
+        resized=next(g for g in canvas.current_layout if g['i']==ident)
+        assert resized['w']==geometry['w']-1 and resized['h']==geometry['h']+2,kind
+        assert frame.body.isEnabled() and not canvas.editing
+        assert frame.body.geometry().bottom()<frame.footer.parentWidget().geometry().top(),kind
+        after=deepcopy(canvas.current_layout)
+        p.layout_store.undo()
+        assert canvas.current_layout==original,kind
+        p.layout_store.redo()
+        assert canvas.current_layout==after,kind
+    assert p.layout_store.flush()
+    key=canvas.size_key;expected=deepcopy(canvas.current_layout)
+    from card_compass.investments import InvestmentStore
+    saved=InvestmentStore(tmp_path).state
+    assert next(page for page in saved['pages'] if page['id']==p.current_page()['id'])['layouts'][key]==expected
     owner.close();owner.deleteLater();app.processEvents()
 
 

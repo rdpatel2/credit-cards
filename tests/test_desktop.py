@@ -277,7 +277,8 @@ def test_sidebar_navigation_and_spending_updates(window, app):
     assert window.details_dialog.isVisible()
 
 
-def test_closed_details_stay_closed_and_reopen_from_keyboard(window, app):
+@pytest.mark.parametrize('key', [Qt.Key.Key_Return, Qt.Key.Key_Enter], ids=['return', 'keypad-enter'])
+def test_closed_details_stay_closed_and_reopen_from_keyboard(window, app, key):
     window.show()
     window.navigate('explore')
     window.search.setText('freedom unlimited')
@@ -290,7 +291,7 @@ def test_closed_details_stay_closed_and_reopen_from_keyboard(window, app):
     window.recalculate()
     assert not window.details_dialog.isVisible()
     window.catalog_table.setFocus()
-    QTest.keyClick(window.catalog_table, Qt.Key.Key_Return)
+    QTest.keyClick(window.catalog_table, key)
     assert window.details_dialog.isVisible()
     # Refreshing the same card preserves the tab the user is reading.
     assert window.detail_tabs.currentIndex() == 1

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from datetime import date
 from contextvars import ContextVar
+from decimal import Decimal
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
@@ -12,6 +13,7 @@ from ..investments import METRICS, RANGES, position, symbol
 from ..market_news import SECTORS
 from ..trading_calendar import earnings_date
 from ..theme import color
+from ..education import TERMS, definition as term_definition
 from ..ui import FitDialog as QDialog
 
 _DATA_CONTEXT=ContextVar('dashboard_data_layer')
@@ -39,6 +41,7 @@ def create_widget(definition,config,size,isEditing,onConfigChange,layer):
 
 
 def money(value):
+    if isinstance(value,str):value=Decimal(value)
     return '—' if value is None else f"{'−' if value < 0 else ''}${abs(value):,.2f}"
 
 
@@ -151,13 +154,13 @@ class DataWidget(QStackedWidget):
                     self.watchlists = QComboBox()
                     self.watchlists.currentIndexChanged.connect(lambda: onConfigChange({'watchlistId':self.watchlists.currentData()}))
                     controls.addWidget(self.watchlists,1)
-                    for label, action in [('Add ticker','add_symbol'),('Record trade','record_trade'),('Sell','sale_selected')]:
+                    for label, action in [('Add ticker','add_symbol'),('Record trade','record_trade'),('Import CSV','import_broker_csv'),('Sell','sale_selected')]:
                         button=QPushButton(label);button.setObjectName('rowAction')
                         button.clicked.connect(lambda checked=False,a=action:self.handle_action(a));controls.addWidget(button)
                         if action=='sale_selected':self.selection_actions.append(button)
                     actions=QPushButton('Actions');actions.setObjectName('rowAction');actions.setProperty('essential',True)
                     menu=QMenu(actions)
-                    for title,action in [('Add ticker','add_symbol'),('Record trade','record_trade'),('Sell selected','sale_selected'),('Remove selected ticker','remove_symbol'),('New watchlist','new_watchlist'),('Rename watchlist','rename_watchlist'),('Delete watchlist','delete_watchlist')]:
+                    for title,action in [('Add ticker','add_symbol'),('Record trade','record_trade'),('Import CSV','import_broker_csv'),('Sell selected','sale_selected'),('Remove selected ticker','remove_symbol'),('New watchlist','new_watchlist'),('Rename watchlist','rename_watchlist'),('Delete watchlist','delete_watchlist')]:
                         item=menu.addAction(title,lambda checked=False,a=action:self.handle_action(a))
                         if action in ('sale_selected','remove_symbol'):self.selection_actions.append(item)
                     actions.setMenu(menu);controls.addWidget(actions)
@@ -245,6 +248,7 @@ class DataWidget(QStackedWidget):
         elif action in ('edit_trade','delete_trade'):
             if 0<=row<len(self.trade_rows):self.layer.action(action,self.trade_rows[row])
         elif action=='record_trade':self.layer.action(action,ticker if self.definition.type=='positions' else None,None,self.config.get('watchlistId') if self.definition.type=='positions' else None)
+        elif action=='import_broker_csv':self.layer.action(action)
 
     def state_message(self, message):
         self.message_label.setText(message)
@@ -265,12 +269,12 @@ class DataWidget(QStackedWidget):
             self.setCurrentWidget(self.content);self.set_footer('Notes · saved on this device');return
         statuses=[self.layer.status(k,v) for k,v in self.keys]
         loaded=[self.layer.data(k,v) for k,v in sorted(self.keys)]
-        sources=[f"{v.get('source','Public data')} · {v.get('asOf','')[:19]}" for v in loaded if v]
-        self.set_footer(('Cached · ' if 'stale' in statuses else '') + (sources[0] if sources else 'Refresh to load data' if self.keys else 'Saved on this device'))
-        if 'loading' in statuses:self.set_footer(('Cached data · ' if any(v and v.get('stale') for v in loaded) else '')+'Loading data…'+(' · '+sources[0] if sources else ''))
+        confidence = self.layer.describe(self.keys)
+        self.set_footer(confidence)
+        if 'loading' in statuses:self.set_footer(confidence+' · Loading data…')
         elif 'error' in statuses or any(k+':'+v in self.layer.failures for k,v in self.keys):
             failure=next((self.layer.failures[k+':'+v] for k,v in self.keys if k+':'+v in self.layer.failures),'Data unavailable')
-            self.set_footer(('Cached data · ' if any(loaded) else '')+failure+' · Refresh to retry')
+            self.set_footer(confidence+' · '+failure+' · Refresh to retry')
         if self.keys and not any(loaded) and kind not in ('watchlist','positions','market','movers'):
             if 'loading' in statuses:
                 self.state_message('Loading '+self.definition.title.lower()+'…');return
@@ -322,8 +326,9 @@ class DataWidget(QStackedWidget):
             self.rows(['Period' if kind=='analyst' else 'Metric','Sell+ / Sell / Hold / Buy / Buy+' if kind=='analyst' else 'Value'],rows[:limit] if kind=='analyst' else rows)
             if kind=='metrics':
                 for row,key in enumerate(config.get('metrics',list(METRICS)[:8])):
+                    self.table.item(row,0).setToolTip(TERMS.get(key,''))
                     if data.get('values',{}).get(key) is None:self.table.item(row,1).setToolTip('Not supplied by the data provider. Refresh or choose another metric.')
-            if kind=='analyst':self.table.horizontalHeaderItem(1).setToolTip('Strong sell / Sell / Hold / Buy / Strong buy recommendation counts')
+            if kind=='analyst':self.table.horizontalHeaderItem(1).setToolTip('Strong sell / Sell / Hold / Buy / Strong buy recommendation counts. '+TERMS['analyst consensus'])
         elif kind in ('watchlist','positions','market','movers'):
             if kind=='positions':
                 self.watchlists.blockSignals(True);self.watchlists.clear()
@@ -356,10 +361,11 @@ class DataWidget(QStackedWidget):
                 for col in range(self.table.columnCount()):self.table.item(row,col).setToolTip(detail+'\n'+self.table.item(row,col).text())
         elif kind in ('trades','ledger'):
             query=self.filter.text().upper() if kind=='ledger' else ''
-            self.trade_rows=sorted([(s,t) for s,trades in self.layer.state['trades'].items() if query in s for t in trades],key=lambda pair:pair[1]['date'],reverse=True)
-            rows=[[t['date'],s,t['side'].title(),numeric(t['quantity']),money(t['price']),money(t['fees'])] for s,t in self.trade_rows]
+            accounts={a['id']:a['name'] for a in self.layer.state['investmentAccounts']}
+            self.trade_rows=sorted([(s,t) for s,trades in self.layer.state['trades'].items() for t in trades if query in s or query in accounts[t.get('accountId','legacy')].upper()],key=lambda pair:pair[1]['date'],reverse=True)
+            rows=[[t['date'],s,t['side'].title(),numeric(t['quantity']),money(t['price']),money(t['fees']),accounts[t.get('accountId','legacy')]] for s,t in self.trade_rows]
             keys=[t['id'] for s,t in self.trade_rows]
-            self.rows(['Date','Ticker','Side','Shares','Price','Fees'],rows if kind=='ledger' else rows[:limit],keys if kind=='ledger' else keys[:limit])
+            self.rows(['Date','Ticker','Side','Shares','Price','Fees','Account'],rows if kind=='ledger' else rows[:limit],keys if kind=='ledger' else keys[:limit])
         elif kind in ('news','headlines','earnings'):
             req=next(iter(self.keys));data=self.layer.data(*req) or {}
             query=self.filter.text().casefold() if kind=='headlines' else ''
@@ -371,7 +377,7 @@ class DataWidget(QStackedWidget):
             if not items:
                 if kind=='headlines':
                     self.rows(['Headline','Published','Sector tags'],[])
-                    self.set_footer('No matching headlines · change search/sector or Refresh')
+                    self.set_footer(confidence+' · No matching headlines · change search/sector or Refresh')
                     return
                 self.state_message('No '+('earnings events for this date. Configure another date or refresh.' if kind=='earnings' else 'matching headlines. Change the search/sector or refresh.'));return
             rows=[[i.get('symbol',''),i.get('name',''),'—' if i.get('epsForecast') in (None,'') else i['epsForecast'],i.get('reportTime','Not supplied')] if kind=='earnings' else [i['title'],i.get('date',''),', '.join(i.get('sectors',[]))] for i in self.articles]
@@ -397,6 +403,8 @@ class DataWidget(QStackedWidget):
         offset=self.table.verticalScrollBar().value()
         self.table.setCurrentCell(-1,-1);self.table.clearSelection()
         self.table.setColumnCount(len(headers));self.table.setHorizontalHeaderLabels(headers)
+        for column, label in enumerate(headers):
+            self.table.horizontalHeaderItem(column).setToolTip(term_definition(label) or label)
         self.table.setRowCount(len(rows))
         for i,row in enumerate(rows):
             key=keys[i] if keys is not None else str(row[0])
@@ -493,7 +501,7 @@ class ConfigPanel(QDialog):
                     field.setToolTip('Leave blank to follow the next US trading day, or enter a fixed date as YYYY-MM-DD.')
             form.addRow(label,field);self.fields[key]=field
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
-        if not self.fields:layout.addWidget(QLabel('Use the widget menu to rename this block, and Edit layout to move or resize it.'))
+        if not self.fields:layout.addWidget(QLabel('Use the widget menu to rename this block, drag an edge or corner to resize, and Edit layout to move it.'))
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(bool(self.fields))
         buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);layout.addWidget(buttons)

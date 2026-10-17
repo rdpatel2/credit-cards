@@ -145,8 +145,9 @@ def test_interrupted_drag_restores_original_without_saving(window,cancel):
 
 
 @pytest.mark.parametrize('kind',['right','bottom','corner'])
-def test_edge_corner_resize_and_double_click_fit(window,kind):
-    p=window.stocks_page;p.edit_layout.setChecked(True);canvas=p.active_canvas();g=deepcopy(canvas.current_layout[0]);frame=canvas.frames[g['i']]
+@pytest.mark.parametrize('editing',[True,False])
+def test_edge_corner_resize_and_double_click_fit(window,kind,editing):
+    p=window.stocks_page;p.edit_layout.setChecked(editing);canvas=p.active_canvas();g=deepcopy(canvas.current_layout[0]);frame=canvas.frames[g['i']]
     handle=frame.handles[kind];start=canvas.mapFromScene(canvas.items[g['i']].pos()+QPointF(handle.geometry().center()))
     delta=QPoint(round(canvas.column_width) if kind!='bottom' else 0,20 if kind!='right' else 0)
     QTest.mousePress(canvas.viewport(),Qt.MouseButton.LeftButton,pos=start);QTest.mouseMove(canvas.viewport(),start+delta)

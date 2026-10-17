@@ -3,7 +3,7 @@ from PySide6.QtCore import QDate, Qt, QRectF
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QDialogButtonBox, QLineEdit, QCheckBox, QDateEdit, QPushButton, QTableWidgetItem,
-    QScrollArea, QMessageBox, QTabWidget, QHeaderView, QAbstractItemView, QLayout)
+    QScrollArea, QMessageBox, QTabWidget, QHeaderView, QAbstractItemView, QLayout, QMenu)
 from .finance import FinanceStore
 from .ui import Metric, text, surface, ScrollSafeComboBox, ScrollSafeDoubleSpinBox, ScrollSafeDateEdit, MonthPicker
 from .import_ui import grid, amount, category_label
@@ -248,6 +248,14 @@ class FinancePage(QWidget):
         add.setObjectName('primary')
         add.clicked.connect(lambda: self.edit_entry())
         controls.addWidget(add)
+        self.plan_tools = QPushButton('Plan tools')
+        self.plan_tools.setObjectName('rowAction')
+        self.plan_tools_menu = QMenu(self.plan_tools)
+        self.plan_tools_menu.addAction('What is included?', self.show_coverage)
+        self.plan_tools_menu.addAction('Cash runway / variable income…', self.show_cash_forecast)
+        self.plan_tools_menu.addAction('Review recurring card charges…', self.show_recurring)
+        self.plan_tools.setMenu(self.plan_tools_menu)
+        controls.addWidget(self.plan_tools)
         layout.addLayout(controls)
         self.welcome = surface('hero')
         welcome = QVBoxLayout(self.welcome)
@@ -257,6 +265,15 @@ class FinancePage(QWidget):
         self.quick_start.setObjectName('primary')
         self.quick_start.clicked.connect(self.start_setup)
         welcome.addWidget(self.quick_start)
+        welcome.addWidget(text('Your data stays on this device. After you make a plan, save a separate backup so you can recover it later.', 'muted', True))
+        self.backup_reminder = QPushButton('Back up my data')
+        self.backup_reminder.setObjectName('rowAction')
+        self.backup_reminder.clicked.connect(owner.backup_data)
+        welcome.addWidget(self.backup_reminder)
+        self.backup_reminder.setEnabled(not owner.is_demo)
+        orientation = QPushButton('Explore examples / choose my starting path')
+        orientation.clicked.connect(lambda:owner.navigate('start'))
+        welcome.addWidget(orientation)
         layout.addWidget(self.welcome)
         metrics = QHBoxLayout()
         self.metrics = [Metric('Expected income', 'Before you mark it received'), Metric('Planned outflow', 'Budgets and scheduled bills'),
@@ -268,7 +285,12 @@ class FinancePage(QWidget):
         self.status = text('', 'muted', True)
         layout.addWidget(self.status)
         self.pending = text('', 'muted', True)
-        layout.addWidget(self.pending)
+        self.pending.setWordWrap(False)
+        self.coverage_label = text('', 'muted')
+        data_status = QHBoxLayout()
+        data_status.addWidget(self.pending,1)
+        data_status.addWidget(self.coverage_label,1)
+        layout.addLayout(data_status)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, 1)
         self.welcome_space = QWidget()
@@ -398,6 +420,9 @@ class FinancePage(QWidget):
         self.status.setText(f"Received {amount(summary['received'])} · Spent {amount(summary['actual'])} · Includes {amount(summary['card_total'])} on cards" + (' · Your plan exceeds your income.' if summary['remaining'] < 0 else ''))
         pending = [row for row in summary['entries'] if not row['posted']]
         self.pending.setText(f"{len(pending)} scheduled item(s) still need marking received / paid below." if pending else 'All entries for this month are up to date.' if summary['entries'] else 'Start by adding income or building your first plan.')
+        coverage = self.store.coverage(self.period(),self.owner.profile.get('wallet',[]))
+        self.coverage_label.setText(f"Records: {coverage['received_income']} received · {coverage['paid_expenses']} paid · {coverage['imported_transactions']} card")
+        self.coverage_label.setToolTip('Recorded income, non-card expenses and card purchases/refunds. Coverage may be incomplete; missing activity is not estimated. Use Plan tools → What is included? to review account/date coverage.')
         categories = {k: v for k, v in summary['categories'].items() if any(v.values()) or k in summary['target_sources']}
         self.targets.blockSignals(True)
         self.targets.setRowCount(len(categories))
@@ -512,6 +537,31 @@ class FinancePage(QWidget):
         layout.addWidget(buttons)
         reload()
         dialog.exec()
+
+    def show_cash_forecast(self):
+        from .cash_forecast_ui import CashForecastDialog
+        CashForecastDialog(self.owner).exec()
+
+    def show_recurring(self):
+        from .recurring_ui import RecurringDialog
+        RecurringDialog(self.owner).exec()
+
+    def show_coverage(self):
+        coverage = self.store.coverage(self.period(),self.owner.profile.get('wallet',[]))
+        lines = [f"Month: {self.period()}",f"Received income entries: {coverage['received_income']}",f"Paid non-card expenses: {coverage['paid_expenses']}",f"Scheduled entries still unposted: {coverage['pending']}",f"Imported purchases/refunds: {coverage['imported_transactions']}",'','Imported activity by purchase date:']
+        for row in coverage['accounts']:
+            lines.append(f"{row['issuer']} · {row['ending'] or 'account ending unknown'}: {row['transaction_count']} transactions, {row['first_date']} to {row['last_date']}")
+        if not coverage['accounts']:
+            lines.append('No imported card activity in this month. This does not mean no money was spent.')
+        lines.extend(['','Statements closing in this month:'])
+        lines.extend(row['closing_date']+' · '+row['filename'] for row in coverage['closings'])
+        if not coverage['closings']:
+            lines.append('None recorded.')
+        if coverage['without_closing']:
+            lines.extend(['','Wallet cards without a statement closing in this month:'])
+            lines.extend(self.owner.by_id.get(ident,{}).get('name',ident) for ident in coverage['without_closing'])
+        lines.extend(['','A closing date or transaction range does not prove complete coverage of a calendar month. Actual card spending uses purchase dates; cash entries count only when marked received/paid. Card payments, transfers, interest and fees from statements are excluded. Bank transactions and balances are not automatically linked.'])
+        QMessageBox.information(self,'What is included in this budget?','\n'.join(lines))
 
     def edit_entry(self, row=None, monthly_income=False):
         dialog = EntryDialog(self.owner, self.period(), row, monthly_income=monthly_income)

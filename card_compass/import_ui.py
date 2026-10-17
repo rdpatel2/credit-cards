@@ -500,6 +500,9 @@ class ImportsPage(QWidget):
         actions = QHBoxLayout()
         self.summary = text('Import statements. Remember merchants.', 'sectionTitle')
         actions.addWidget(self.summary, 1)
+        recurring = QPushButton('Recurring charges')
+        recurring.clicked.connect(self.show_recurring)
+        actions.addWidget(recurring)
         import_button = QPushButton('Import CSV or PDF')
         import_button.setObjectName('primary')
         import_button.setIcon(icon('plus', '#ffffff', 16))
@@ -577,6 +580,10 @@ class ImportsPage(QWidget):
             table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tabs.currentChanged.connect(self.update_actions)
         self.reload()
+
+    def show_recurring(self):
+        from .recurring_ui import RecurringDialog
+        RecurringDialog(self.owner).exec()
 
     def categories(self):
         result = set(DEFAULT_CATEGORIES) | set(EXTRA_CATEGORIES) | set(self.owner.profile.get('spend', {}))

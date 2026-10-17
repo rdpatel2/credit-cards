@@ -22,8 +22,9 @@ def canvas():
     view.close();view.deleteLater();app.processEvents()
 
 
-@pytest.mark.parametrize('kind',['move','corner'])
-def test_touch_routes_through_viewport_for_drag_and_resize(canvas,kind):
+@pytest.mark.parametrize('kind,editing',[('move',True),('corner',True),('corner',False)])
+def test_touch_routes_through_viewport_for_drag_and_resize(canvas,kind,editing):
+    canvas.set_editing(editing)
     device=QTest.createTouchDevice(QInputDevice.DeviceType.TouchScreen)
     frame=canvas.frames['a'];handle=frame.header if kind=='move' else frame.handles[kind]
     start=canvas.mapFromScene(canvas.items['a'].pos()+QPointF(handle.geometry().center()))
@@ -38,8 +39,9 @@ def test_touch_routes_through_viewport_for_drag_and_resize(canvas,kind):
     assert (g['x'],g['y'])==(1,2) if kind=='move' else (g['w'],g['h'])==(7,32)
 
 
-@pytest.mark.parametrize('kind',['move','bottom'])
-def test_pen_routes_through_viewport_for_drag_and_resize(canvas,kind):
+@pytest.mark.parametrize('kind,editing',[('move',True),('bottom',True),('bottom',False)])
+def test_pen_routes_through_viewport_for_drag_and_resize(canvas,kind,editing):
+    canvas.set_editing(editing)
     device=QPointingDevice('Test pen',12,QInputDevice.DeviceType.Stylus,QPointingDevice.PointerType.Pen,
         QInputDevice.Capability.Position|QInputDevice.Capability.Pressure,1,1)
     frame=canvas.frames['a'];handle=frame.header if kind=='move' else frame.handles[kind]
@@ -69,3 +71,36 @@ def test_keyboard_activation_distance_locks_and_accessible_announcements(canvas)
     dashboard=deepcopy(canvas.dashboard);dashboard['layouts']['md'][0]['locked']=True;canvas.set_dashboard(dashboard)
     QTest.keyClick(frame.header,Qt.Key.Key_Space)
     assert canvas.interaction is None and not frame.header.enabled
+
+
+@pytest.mark.parametrize('kind',['right','bottom','corner'])
+def test_keyboard_resize_without_edit_mode_supports_commit_cancel_and_locks(canvas,kind):
+    canvas.set_editing(False)
+    frame=canvas.frames['a'];handle=frame.handles[kind]
+    original=deepcopy(canvas.current_layout)
+    assert handle.enabled and handle.isVisible() and frame.body.isEnabled()
+    assert not frame.header.enabled
+    changes=[]
+    canvas.layoutChanged.connect(lambda key,layout:changes.append(layout))
+    QTest.keyClick(handle,Qt.Key.Key_Space)
+    QTest.keyClick(handle,Qt.Key.Key_Right)
+    QTest.keyClick(handle,Qt.Key.Key_Down)
+    QTest.keyClick(handle,Qt.Key.Key_Escape)
+    assert canvas.current_layout==original and not changes and canvas.interaction is None
+    QTest.keyClick(handle,Qt.Key.Key_Space)
+    QTest.keyClick(handle,Qt.Key.Key_Right)
+    QTest.keyClick(handle,Qt.Key.Key_Down)
+    QTest.keyClick(handle,Qt.Key.Key_Return)
+    resized=canvas.current_layout[0]
+    assert resized['w']==original[0]['w']+(kind!='bottom')
+    assert resized['h']==original[0]['h']+(kind!='right')
+    assert resized['x']==original[0]['x'] and resized['y']==original[0]['y']
+    assert len(changes)==1 and canvas.interaction is None
+    dashboard=deepcopy(canvas.dashboard)
+    dashboard['layouts'][canvas.size_key]=deepcopy(canvas.current_layout)
+    dashboard['layouts'][canvas.size_key][0]['locked']=True
+    canvas.set_dashboard(dashboard)
+    locked=deepcopy(canvas.current_layout)
+    assert all(not handle.enabled and handle.isHidden() for handle in frame.handles.values())
+    canvas.begin('a',QPointF(0,0),kind,keyboard=True)
+    assert canvas.interaction is None and canvas.current_layout==locked

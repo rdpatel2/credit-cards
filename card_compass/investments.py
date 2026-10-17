@@ -1,6 +1,6 @@
 """Native investment workspace and Decimal FIFO accounting, ported from Folio."""
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import math
 import re
@@ -23,9 +23,67 @@ METRICS = {'trailingEps': 'EPS (TTM)', 'forwardEps': 'Forward EPS', 'trailingPE'
 RANGES = ('1d', '1mo', '3mo', '1y', '5y')
 VIEW_COLUMNS = {
     'watchlist': ['Ticker', 'Company', 'Price', 'Day %', 'Shares', 'Average cost', 'Remaining basis'],
-    'trades': ['Date', 'Ticker', 'Side', 'Shares', 'Price', 'Fees'],
+    'trades': ['Date', 'Ticker', 'Side', 'Shares', 'Price', 'Fees', 'Account'],
     'news': ['Headline', 'Published', 'Sector tags'],
 }
+
+INVESTMENT_ACCOUNT_TYPES = {'unknown': 'Unassigned / tax treatment unknown', 'brokerage': 'Taxable brokerage',
+                            'ira': 'Traditional IRA', 'roth': 'Roth IRA', '401k': '401(k)',
+                            'hsa': 'HSA', 'other': 'Other / review tax treatment'}
+
+
+def legacy_account():
+    return dict(id='legacy', name='Unassigned historical trades', kind='unknown', currency='USD', owner='')
+
+
+def validate_accounts(accounts):
+    if not isinstance(accounts, list) or not 1 <= len(accounts) <= 100:
+        raise ValueError('Keep between 1 and 100 investment accounts.')
+    ids = set()
+    for account in accounts:
+        if not isinstance(account, dict):
+            raise ValueError('Invalid investment account.')
+        ident = account.get('id')
+        if not isinstance(ident, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', ident) or ident in ids:
+            raise ValueError('Investment accounts need unique IDs.')
+        ids.add(ident)
+        if account.get('kind') not in INVESTMENT_ACCOUNT_TYPES or account.get('currency') != 'USD':
+            raise ValueError('Investment trades currently support USD accounts only.')
+        for key in ('name', 'owner'):
+            value = account.get(key)
+            if not isinstance(value, str) or len(value) > 120 or (key == 'name' and not value.strip()):
+                raise ValueError('Use an account name and owner of at most 120 characters.')
+    if 'legacy' not in ids:
+        raise ValueError('Preserve the unassigned historical-trades account.')
+    return ids
+
+
+def validate_broker_history(history, accounts):
+    if not isinstance(history,list) or len(history)>200:
+        raise ValueError('Invalid broker import history.')
+    ids=set()
+    for record in history:
+        ident=record.get('id') if isinstance(record,dict) else None
+        if not isinstance(ident,str) or not re.fullmatch(r'[a-f0-9]{32}',ident) or ident in ids:
+            raise ValueError('Invalid broker import record.')
+        ids.add(ident)
+        moment=datetime.fromisoformat(record['importedAt'])
+        if moment.tzinfo is None:raise ValueError('Import timestamps need a time zone.')
+        if not isinstance(record['files'],list) or len(record['files'])>2 or any(not isinstance(name,str) or len(name)>256 for name in record['files']):
+            raise ValueError('Invalid import source metadata.')
+        for key in ('added','skipped','possibleDuplicates'):
+            if type(record[key]) is not int or not 0<=record[key]<=10000:raise ValueError('Invalid import counts.')
+        for key in ('duplicatesAcknowledged','variancesAcknowledged'):
+            if type(record[key]) is not bool:raise ValueError('Invalid import review state.')
+        rows=record['reconciliation']
+        if not isinstance(rows,list) or len(rows)>10000:raise ValueError('Invalid position reconciliation.')
+        for row in rows:
+            if row['accountId'] not in accounts:raise ValueError('Reconciliation refers to a missing account.')
+            symbol(row['ticker'])
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',row['as_of']):raise ValueError('Invalid snapshot date.')
+            date.fromisoformat(row['as_of'])
+            actual,expected=number(row['recorded']),number(row['broker'])
+            if Decimal(str(row['difference']))!=actual-expected:raise ValueError('Invalid reconciliation difference.')
 
 
 def validate_view_settings(settings):
@@ -80,6 +138,9 @@ def position(trades):
     lots, disposals, ids = [], [], set()
     buy_basis = buy_quantity = Decimal(0)
     for trade in sorted(trades, key=lambda row: row['date']):
+        account_id = trade.get('accountId', 'legacy')
+        if not isinstance(account_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', account_id):
+            raise ValueError('Invalid trade account.')
         if not isinstance(trade['id'], str) or not 1 <= len(trade['id']) <= 80:
             raise ValueError('A valid trade ID is required.')
         if trade['id'] in ids:
@@ -93,7 +154,7 @@ def position(trades):
             raise ValueError('Trade values must be at most 1 billion.')
         if trade['side'] == 'buy':
             basis = qty * price + fees
-            lots.append(dict(id=trade['id'], date=trade['date'], quantity=qty, basis=basis))
+            lots.append(dict(id=trade['id'], date=trade['date'], quantity=qty, basis=basis, accountId=account_id))
             buy_quantity += qty
             buy_basis += basis
         elif trade['side'] == 'sell':
@@ -103,19 +164,19 @@ def position(trades):
             for lot in lots:
                 if not remaining:
                     break
-                if not lot['quantity']:
+                if not lot['quantity'] or lot['accountId'] != account_id:
                     continue
                 used = min(remaining, lot['quantity'])
                 basis = lot['basis'] * used / lot['quantity']
                 proceeds = used * price - fees * used / qty
                 disposals.append(dict(tradeId=trade['id'], lotId=lot['id'], acquired=lot['date'], sold=trade['date'],
                                       quantity=used, basis=basis, proceeds=proceeds, gain=proceeds-basis,
-                                      longTerm=long_term(lot['date'], trade['date'])))
+                                      longTerm=long_term(lot['date'], trade['date']), accountId=account_id))
                 lot['quantity'] -= used
                 lot['basis'] -= basis
                 remaining -= used
             if remaining:
-                raise ValueError(f"Sale on {trade['date']} exceeds shares held on that date.")
+                raise ValueError(f"Sale on {trade['date']} exceeds shares held in account {account_id} on that date.")
         else:
             raise ValueError('Choose buy or sell.')
     quantity = sum((lot['quantity'] for lot in lots), Decimal(0))
@@ -160,7 +221,9 @@ def initial_workspace():
                        page('market-news', 'Market news', ['headlines', 'notes'])],
                 stockTemplate=page('stock-template', 'Stock research', ['chart', 'quote', 'metrics', 'analyst', 'news', 'notes']),
                 stockOverrides={}, newsPages={}, templates={}, notes={}, trades={}, taxProfile=None,
-                watchlists=[dict(id='core', name='Core watchlist', symbols=['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN'])])
+                watchlists=[dict(id='core', name='Core watchlist', symbols=['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN'])],
+                investmentAccounts=[legacy_account()], brokerImports=[], securityClassifications={},
+                performanceRecords=dict(valuations=[],flows=[]))
 
 
 def include_purchased_symbols(state, tickers=None, watchlist_id=None):
@@ -191,7 +254,45 @@ def validate_workspace(raw):
         value.setdefault('stockOverrides', {})
         value.setdefault('newsPages', {})
         value.setdefault('taxProfile', None)
+        value.setdefault('investmentAccounts', [legacy_account()])
+        accounts = validate_accounts(value['investmentAccounts'])
+        if 'serviceCopies' in value:
+            from .shared_sync import validate_investment_copies
+            validate_investment_copies(value['serviceCopies'],accounts)
+        value.setdefault('brokerImports', [])
+        validate_broker_history(value['brokerImports'], accounts)
+        from .portfolio_analysis import validate_classifications
+        value.setdefault('securityClassifications', {})
+        validate_classifications(value['securityClassifications'])
+        from .performance import validate_records
+        value.setdefault('performanceRecords',dict(valuations=[],flows=[]))
+        validate_records(value['performanceRecords'],accounts)
+        if 'dividendEvents' in value:
+            from .dividends import validate_events
+            validate_events(value['dividendEvents'],accounts)
+        if 'riskFactorSets' in value:
+            from .risk_analysis import validate_factor_sets
+            validate_factor_sets(value['riskFactorSets'])
+        from .security_research import validate_views
+        if 'researchViews' in value:validate_views(value['researchViews'])
+        if 'marketAlerts' in value:
+            from .market_alerts import validate_alerts
+            validate_alerts(value['marketAlerts'])
+        if 'performanceBenchmark' in value:
+            settings=value['performanceBenchmark']
+            if not isinstance(settings,dict) or settings.get('range') not in ('1y','5y'):
+                raise ValueError('Choose a one-year or five-year benchmark range.')
+            symbol(settings['symbol'])
         if 'viewSettings' in value:
+            settings=value['viewSettings']
+            if isinstance(settings,dict) and isinstance(settings.get('order'),dict):
+                order=settings['order'].get('trades')
+                if isinstance(order,list) and len(order)==6 and set(order)==set(range(6)):
+                    settings['order']['trades']=[*order,6]
+            if isinstance(settings,dict) and isinstance(settings.get('columns'),dict):
+                columns=settings['columns'].get('trades')
+                if isinstance(columns,list) and columns==list(range(6)):
+                    settings['columns']['trades']=[*columns,6]
             validate_view_settings(value['viewSettings'])
         if 'newsPanelSizes' in value:
             sizes = value['newsPanelSizes']
@@ -231,10 +332,20 @@ def validate_workspace(raw):
                     w['config'] = defaults
                 if not isinstance(w['config'], dict):
                     raise ValueError('Invalid widget configuration.')
+        broker_ids=set()
         for key, trades in value['trades'].items():
             symbol(key)
             if len(trades)>5000:
                 raise ValueError('Too many trades.')
+            for row in trades:
+                if row.get('accountId', 'legacy') not in accounts:
+                    raise ValueError('A trade refers to a missing investment account.')
+                if 'externalId' in row and (not isinstance(row['externalId'], str) or not 1 <= len(row['externalId']) <= 120):
+                    raise ValueError('Invalid broker transaction ID.')
+                if row.get('externalId'):
+                    identity=row.get('accountId','legacy'),row['externalId']
+                    if identity in broker_ids:raise ValueError('Duplicate broker transaction ID in the same account.')
+                    broker_ids.add(identity)
             position(trades)
         include_purchased_symbols(value)
         for key, note in value['notes'].items():

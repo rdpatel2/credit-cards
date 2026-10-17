@@ -149,7 +149,11 @@ def test_changed_content_replaces_cache_after_explicit_refresh(app, tmp_path):
     cache.close()
 
 
-@pytest.mark.parametrize('raw,status', [(b'<html>blocked</html>', 200), (b'', 404), (b'x' * (MAX_BYTES + 1), 200)])
+@pytest.mark.parametrize('raw,status', [
+    pytest.param(b'<html>blocked</html>', 200, id='invalid-image'),
+    pytest.param(b'', 404, id='not-found'),
+    pytest.param(b'x' * (MAX_BYTES + 1), 200, id='oversized-image'),
+])
 def test_failed_or_invalid_download_keeps_previous_artwork(app, tmp_path, raw, status):
     cache = ArtworkCache(tmp_path, manager=Manager(raw, status))
     path, meta = cache.paths(artwork_url(sample()))

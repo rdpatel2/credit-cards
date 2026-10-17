@@ -204,3 +204,27 @@ class FinanceStore(Ledger):
         return dict(income=income, received=received, planned=planned, actual=actual, target_sources={key: value[1] for key, value in target_values.items()},
                     remaining=income-planned, cash_flow=received-actual,
                     card_total=card_total, categories=categories, entries=entries)
+
+    def coverage(self, month, wallet_ids=()):
+        """Observed import coverage, not a claim that an entire bank month is complete."""
+        valid_month(month)
+        with self.connection() as db:
+            accounts = [dict(row) for row in db.execute('''
+                SELECT a.account_key,a.card_id,a.issuer,a.ending,
+                    MIN(t.date) AS first_date,MAX(t.date) AS last_date,COUNT(t.id) AS transaction_count
+                FROM accounts a JOIN transactions t USING(account_key)
+                WHERE substr(t.date,1,7)=? AND t.kind IN ('purchase','refund')
+                GROUP BY a.account_key ORDER BY a.issuer,a.ending
+            ''', (month,))]
+            closings = [dict(row) for row in db.execute('''
+                SELECT a.card_id,s.closing_date,s.filename FROM statements s JOIN accounts a USING(account_key)
+                WHERE substr(s.closing_date,1,7)=? ORDER BY s.closing_date
+            ''', (month,))]
+        entries = self.entries(month)
+        cards = {row['card_id'] for row in closings}
+        return dict(accounts=accounts, closings=closings,
+                    imported_transactions=sum(row['transaction_count'] for row in accounts),
+                    paid_expenses=sum(row['kind']=='expense' and bool(row['posted']) for row in entries),
+                    received_income=sum(row['kind']=='income' and bool(row['posted']) for row in entries),
+                    pending=sum(not row['posted'] for row in entries),
+                    without_closing=[ident for ident in wallet_ids if ident not in cards])
