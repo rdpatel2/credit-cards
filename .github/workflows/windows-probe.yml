@@ -1,0 +1,76 @@
+name: Windows environment probe
+on:
+  push:
+    branches: [ci/windows-probe]
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[dev,connections,connections-test]"
+      - name: Inspect Qt geometry and SQLite snapshot cleanup
+        shell: python
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          import gc, tempfile, traceback
+          from pathlib import Path
+          from datetime import date
+          from PySide6.QtCore import QEvent
+          from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
+          from PySide6.QtWidgets import QApplication
+          from card_compass.app import MainWindow, configure_application
+          from card_compass.connected_ui import ConnectedServicesDialog
+          from card_compass.finance import FinanceStore
+          from card_compass.planning import PlanningStore
+          from card_compass.local_api import read_saved
+          app = QApplication([])
+          for configured in [False, True]:
+              if configured:
+                  configure_application(app)
+              print('CONFIGURED', configured, 'SCREEN', app.primaryScreen().availableGeometry(), 'DPR', app.primaryScreen().devicePixelRatio(), 'DPI', app.primaryScreen().logicalDotsPerInch(), 'FONT', app.font().toString(), QFontInfo(app.font()).family(), flush=True)
+              with tempfile.TemporaryDirectory() as directory:
+                  window = MainWindow(Path(directory), auto_refresh=False)
+                  dialog = ConnectedServicesDialog(window)
+                  dialog.resize(1080, 700)
+                  dialog.show()
+                  for _ in range(3): app.processEvents()
+                  print('DIALOG', dialog.size(), 'MINIMUM', dialog.minimumSizeHint(), 'BUTTON FONT', dialog.tabs.font().toString(), flush=True)
+                  if hasattr(dialog, 'text_scroll'):
+                      print('OVERFLOW', dialog.text_scroll.horizontalScrollBar().maximum(), 'CONTENT', dialog.text_scroll.widget().minimumSizeHint(), 'VIEWPORT', dialog.text_scroll.viewport().size(), flush=True)
+                  dialog.close()
+                  window.close()
+                  window.deleteLater()
+                  app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+          with tempfile.TemporaryDirectory() as directory:
+              directory = Path(directory)
+              finance = FinanceStore(directory)
+              PlanningStore(directory)
+              finance.save_entry('Synthetic record', 'income', 'Salary', 100, date.today().strftime('%Y-%m'))
+              try:
+                  print('SNAPSHOT', read_saved(directory, 'cash_flow', date.today().replace(day=1).isoformat(), date.today().isoformat()), flush=True)
+              except Exception:
+                  traceback.print_exc()
+              gc.collect()
+      - name: Check Windows regressions
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -m pytest -v --tb=short -o faulthandler_timeout=120
+          tests/test_cash_forecast_ui.py
+          tests/test_connected_privacy_ui.py
+          tests/test_connected_ui.py
+          tests/test_dashboard_registry.py
+          tests/test_institution_balances_ui.py
+          tests/test_local_api.py
+          tests/test_local_api_ui.py
+          tests/test_modal_text.py::test_import_tables_keep_description_and_merchant_fields_readable
+          tests/test_performance_ui.py
+          tests/test_recurring_ui.py
+          tests/test_research_tabs_ui.py
+          tests/test_security_research_ui.py
+          tests/test_usability.py::test_compact_layout_month_controls_and_investment_padding
