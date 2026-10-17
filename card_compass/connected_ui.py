@@ -235,16 +235,20 @@ class ConnectedServicesDialog(FitDialog):
         publish=QPushButton('Review selected local records for publication…');publish.clicked.connect(self.publish);sharing_layout.addWidget(publish)
         self.shared=grid(['Recorded snapshot','Type','Version','Updated (UTC)','Visibility']);sharing_layout.addWidget(self.shared,1)
         self.shared_details=QTextEdit();self.shared_details.setReadOnly(True)
-        row=QHBoxLayout()
-        for label,handler in [('Refresh selected scope',self.refresh_scope),('Edit shared balance / goal…',self.edit_shared),('Replace from selected local records…',self.replace_shared)]:
-            button=QPushButton(label);button.setToolTip(label);button.clicked.connect(handler);row.addWidget(button)
-        sharing_layout.addLayout(row);row=QHBoxLayout()
-        for label,handler in [('Review download to desktop…',self.download_snapshot),('Detach local copy mapping…',self.detach_copy)]:
-            button=QPushButton(label);button.setToolTip(label);button.clicked.connect(handler);row.addWidget(button)
-        sharing_layout.addLayout(row);row=QHBoxLayout()
-        for label,handler in [('View selected snapshot details',lambda:self.tabs.setCurrentWidget(self.shared_details)),('Withdraw my selected snapshot…',self.withdraw),('Delete my selected snapshot…',self.delete_snapshot)]:
-            button=QPushButton(label);button.setToolTip(label);button.clicked.connect(handler);row.addWidget(button)
-        sharing_layout.addLayout(row);self.tabs.addTab(sharing_page,'Shared records and privacy')
+        # Long action labels must also fit with wider platform fonts on an
+        # 800px screen; hidden tabs contribute to the whole dialog's minimum.
+        for actions in (
+            [('Refresh selected scope',self.refresh_scope),('Edit shared balance / goal…',self.edit_shared)],
+            [('Replace from selected local records…',self.replace_shared)],
+            [('Review download to desktop…',self.download_snapshot),('Detach local copy mapping…',self.detach_copy)],
+            [('View selected snapshot details',lambda:self.tabs.setCurrentWidget(self.shared_details))],
+            [('Withdraw my selected snapshot…',self.withdraw),('Delete my selected snapshot…',self.delete_snapshot)],
+        ):
+            row=QHBoxLayout()
+            for label,handler in actions:
+                button=QPushButton(label);button.setToolTip(label);button.clicked.connect(handler);row.addWidget(button)
+            sharing_layout.addLayout(row)
+        self.tabs.addTab(sharing_page,'Shared records and privacy')
         institutions=QWidget();institution_outer=QVBoxLayout(institutions);self.institution_tabs=QTabWidget();institution_outer.addWidget(self.institution_tabs,1)
         consent=QWidget();institutions_layout=QVBoxLayout(consent)
         self.transactions=QCheckBox('Read bank transaction history');self.investments=QCheckBox('Read investment holdings');institutions_layout.addWidget(self.transactions);institutions_layout.addWidget(self.investments)

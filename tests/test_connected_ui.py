@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import date
 import pytest
 from PySide6.QtCore import QEvent
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication,QMessageBox,QTextEdit
 from card_compass.app import MainWindow
 from card_compass.connected_client import ConnectedClient,ConnectionError
@@ -72,7 +73,18 @@ def test_failed_async_service_request_preserves_local_records_and_scope_change_d
     dialog.close()
 
 
-def test_compact_service_tables_demo_gate_and_close_clear_password(window):
+@pytest.fixture
+def service_font(request):
+    app=QApplication.instance() or QApplication([])
+    original=app.font()
+    if request.param:
+        font=QFont(original);font.setFamily(request.param);app.setFont(font)
+    yield
+    app.setFont(original)
+
+
+@pytest.mark.parametrize('service_font', [None, 'DejaVu Sans'], indirect=True, ids=['default-font', 'wide-font'])
+def test_compact_service_tables_demo_gate_and_close_clear_password(service_font, window):
     window.is_demo=True
     dialog=ConnectedServicesDialog(window);dialog.resize(1080,700);dialog.show()
     for _ in range(3):QApplication.instance().processEvents()
