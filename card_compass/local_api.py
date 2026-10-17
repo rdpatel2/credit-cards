@@ -4,6 +4,7 @@ Tokens and immutable pagination snapshots exist only for this app session.
 No cookies, CORS, URL credentials, filesystem paths or remote listening.
 """
 from collections import deque
+from contextlib import closing
 from datetime import datetime,timezone
 from decimal import Decimal
 import hashlib
@@ -32,7 +33,8 @@ def read_saved(directory,dataset,start,end):
         temporary=Path(temporary)
         path=directory/'investments-workspace.json'
         state=validate_workspace(json.loads(path.read_text(encoding='utf-8'))) if path.exists() else initial_workspace()
-        with sqlite3.connect((directory/'transactions.sqlite3').resolve().as_uri()+'?mode=ro',uri=True) as source,sqlite3.connect(temporary/'transactions.sqlite3') as destination:source.backup(destination)
+        with closing(sqlite3.connect((directory/'transactions.sqlite3').resolve().as_uri()+'?mode=ro',uri=True)) as source,closing(sqlite3.connect(temporary/'transactions.sqlite3')) as destination:
+            source.backup(destination)
         owner=SimpleNamespace(finance_store=FinanceStore(temporary),planning_store=PlanningStore(temporary),investment_store=SimpleNamespace(state=state))
         headers,rows=rows_for(owner,dataset,start,end)
         if len(rows)>100000:raise ValueError('Reduce the date range; a snapshot may contain at most 100,000 rows.')

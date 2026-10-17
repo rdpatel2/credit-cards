@@ -23,7 +23,7 @@ jobs:
           from PySide6.QtCore import QEvent
           from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
           from PySide6.QtWidgets import QApplication
-          from card_compass.app import MainWindow
+          from card_compass.app import MainWindow, configure_application
           from card_compass.connected_ui import ConnectedServicesDialog
           from card_compass.finance import FinanceStore
           from card_compass.planning import PlanningStore
@@ -31,10 +31,7 @@ jobs:
           app = QApplication([])
           for configured in [False, True]:
               if configured:
-                  app.setStyle('Fusion')
-                  families = set(QFontDatabase.families())
-                  family = next((name for name in ('Inter', 'SF Pro Text', 'Segoe UI', 'DejaVu Sans') if name in families), app.font().family())
-                  app.setFont(QFont(family, 10))
+                  configure_application(app)
               print('CONFIGURED', configured, 'SCREEN', app.primaryScreen().availableGeometry(), 'DPR', app.primaryScreen().devicePixelRatio(), 'DPI', app.primaryScreen().logicalDotsPerInch(), 'FONT', app.font().toString(), QFontInfo(app.font()).family(), flush=True)
               with tempfile.TemporaryDirectory() as directory:
                   window = MainWindow(Path(directory), auto_refresh=False)
@@ -59,3 +56,20 @@ jobs:
               except Exception:
                   traceback.print_exc()
               gc.collect()
+      - name: Check Windows regressions
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -m pytest -v --tb=short -o faulthandler_timeout=120
+          tests/test_cash_forecast_ui.py
+          tests/test_connected_privacy_ui.py
+          tests/test_connected_ui.py
+          tests/test_dashboard_registry.py
+          tests/test_institution_balances_ui.py
+          tests/test_local_api.py
+          tests/test_local_api_ui.py
+          tests/test_modal_text.py::test_import_tables_keep_description_and_merchant_fields_readable
+          tests/test_performance_ui.py
+          tests/test_recurring_ui.py
+          tests/test_research_tabs_ui.py
+          tests/test_security_research_ui.py
